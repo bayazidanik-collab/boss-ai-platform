@@ -8,12 +8,12 @@
  * document.write are NEVER used — DOM XSS is structurally impossible.
  */
 
-import StorageAdapter from './src/StorageAdapter.js';
-import TaskEngine from './src/TaskEngine.js';
-import ProjectEngine from './src/ProjectEngine.js';
-import NoteEngine from './src/NoteEngine.js';
-import SearchEngine from './src/SearchEngine.js';
-import BackupEngine from './src/BackupEngine.js';
+import StorageAdapter from './StorageAdapter.js';
+import TaskEngine from './TaskEngine.js';
+import ProjectEngine from './ProjectEngine.js';
+import NoteEngine from './NoteEngine.js';
+import SearchEngine from './SearchEngine.js';
+import BackupEngine from './BackupEngine.js';
 
 /* ================================================================== */
 /* Safe DOM helpers                                                    */
@@ -191,7 +191,6 @@ const state = {
   view: 'dashboard',
   taskFilter: { search: '', status: '', priority: '', tag: '' },
 };
-
 /* ================================================================== */
 /* View switching                                                      */
 /* ================================================================== */
@@ -459,6 +458,7 @@ async function deleteProjectFlow(project) {
   }
   renderAll();
 }
+
 
 /* ================================================================== */
 /* Render: Notes                                                       */
