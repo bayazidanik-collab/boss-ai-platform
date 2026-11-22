@@ -1,0 +1,20 @@
+{
+  "name": "BOSS AI — Personal Productivity Hub",
+  "short_name": "BOSS AI",
+  "description": "Offline-first, mobile-first task, project and note hub. Personal-First · Zero-Spend.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#12141c",
+  "theme_color": "#12141c",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
