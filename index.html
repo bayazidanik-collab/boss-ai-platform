@@ -17,15 +17,10 @@
     <h1 class="app-title">BOSS AI Hub</h1>
     <div class="header-actions">
       <button id="btn-search" class="icon-btn" type="button" aria-label="Open global search" aria-expanded="false">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/>
-          <line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
       <button id="btn-theme" class="icon-btn" type="button" aria-label="Toggle dark or light theme">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-        </svg>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
       </button>
     </div>
   </header>
@@ -34,18 +29,15 @@
   <section id="search-panel" class="search-panel" hidden aria-label="Global search">
     <div class="search-bar">
       <input id="search-input" type="search" inputmode="search" autocomplete="off"
-             placeholder="Search tasks, projects, notes..." aria-label="Search query">
+             placeholder="Search tasks, projects, notes…" aria-label="Search query">
       <button id="btn-search-close" class="icon-btn" type="button" aria-label="Close search">
-        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-          <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
     <div id="search-results" class="search-results" role="region" aria-live="polite"></div>
   </section>
 
-  <!-- ============ Banner slot (quota & storage warnings) ============ -->
+  <!-- ============ Banner slot (quota warnings) ============ -->
   <div id="banner-slot" class="banner-slot" role="alert" aria-live="assertive"></div>
 
   <!-- ============ Main views ============ -->
@@ -70,28 +62,26 @@
         <button id="task-add" class="btn btn-primary" type="button">+ Task</button>
       </div>
       <div class="filter-bar" role="search" aria-label="Task filters">
-        <input id="task-search" type="search" inputmode="search" autocomplete="off" placeholder="Filter tasks..." aria-label="Filter tasks by text">
+        <input id="task-search" type="search" inputmode="search" autocomplete="off" placeholder="Filter tasks…" aria-label="Filter tasks by text">
         <select id="task-filter-status" aria-label="Filter by status">
           <option value="">All statuses</option>
-          <option value="Inbox">Inbox</option>
-          <option value="Next Action">Next Action</option>
-          <option value="In Progress">In Progress</option>
-          <option value="Waiting">Waiting</option>
-          <option value="Completed">Completed</option>
+          <option>Inbox</option>
+          <option>Next Action</option>
+          <option>In Progress</option>
+          <option>Waiting</option>
+          <option>Completed</option>
         </select>
         <select id="task-filter-priority" aria-label="Filter by priority">
           <option value="">All priorities</option>
-          <option value="Urgent">Urgent</option>
-          <option value="High">High</option>
-          <option value="Medium">Medium</option>
-          <option value="Low">Low</option>
+          <option>Urgent</option>
+          <option>High</option>
+          <option>Medium</option>
+          <option>Low</option>
         </select>
         <input id="task-filter-tag" type="text" autocomplete="off" placeholder="Tag" aria-label="Filter by tag">
       </div>
       <ul id="task-list" class="card-list" aria-label="Task list"></ul>
-    </section>
-
-    <!-- Projects -->
+    </section><!-- Projects -->
     <section id="view-projects" class="view" aria-label="Projects" hidden>
       <div class="section-head">
         <h2 class="view-title">Projects</h2>
@@ -115,7 +105,7 @@
 
       <div class="panel">
         <h3 class="section-title">Data &amp; Backup</h3>
-        <p class="hint">Browser storage is not permanent backup. Clearing site data or losing the device can erase records. Export a validated JSON backup regularly; malformed import files are rejected safely without altering current data.</p>
+        <p class="hint">Export keeps a validated JSON copy of everything (tasks, projects, notes, settings). Import restores it — malformed files are rejected without touching your data.</p>
         <div class="btn-row">
           <button id="btn-export" class="btn btn-primary" type="button">Export JSON</button>
           <button id="btn-import" class="btn btn-secondary" type="button">Import JSON</button>
@@ -128,19 +118,21 @@
         <div class="meter" role="meter" aria-label="Client storage usage" aria-valuemin="0" aria-valuemax="100">
           <div id="storage-fill" class="meter-fill"></div>
         </div>
-        <p id="storage-text" class="hint">Calculating...</p>
+        <p id="storage-text" class="hint">Calculating…</p>
         <button id="btn-refresh-storage" class="btn btn-secondary" type="button">Refresh meter</button>
       </div>
 
       <div class="panel">
         <h3 class="section-title">Danger Zone</h3>
-        <p class="hint">Resetting erases ALL local data on this device. Always export a JSON backup first.</p>
+        <p class="hint">Resetting erases ALL local data on this device. Export a backup first.</p>
         <button id="btn-reset" class="btn btn-danger" type="button">Reset all data</button>
       </div>
 
       <div class="panel">
         <h3 class="section-title">About</h3>
-        <p class="hint">BOSS AI — Personal Productivity Hub v1.0.0 · Offline-first · Zero-spend stack. All data stays locally in this browser with no external data transmission or paid APIs, and includes <code>ownerId: local-owner</code> / <code>tenantId: default-tenant</code> for future SaaS compatibility.</p>
+        <p class="hint">BOSS AI — Personal Productivity Hub v1.0.0 · Offline-first · Zero-spend stack.
+        Data lives in this browser only (IndexedDB / LocalStorage) and is tagged
+        <code>ownerId: local-owner</code> / <code>tenantId: default-tenant</code> for future SaaS migration.</p>
       </div>
     </section>
   </main>
@@ -148,46 +140,23 @@
   <!-- ============ Bottom navigation ============ -->
   <nav class="bottom-nav" aria-label="Primary">
     <button class="nav-btn" type="button" data-view="dashboard" aria-current="page">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="3" y="3" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
-        <rect x="13" y="3" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
-        <rect x="3" y="13" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
-        <rect x="13" y="13" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
-      </svg>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="3" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="13" width="8" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       <span>Dashboard</span>
     </button>
     <button class="nav-btn" type="button" data-view="tasks">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 6l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <line x1="12" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M4 13l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <line x1="12" y1="14" x2="20" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <path d="M4 20l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <line x1="12" y1="21" x2="20" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 13l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="14" x2="20" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 20l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="21" x2="20" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Tasks</span>
     </button>
     <button class="nav-btn" type="button" data-view="projects">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-      </svg>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
       <span>Projects</span>
     </button>
     <button class="nav-btn" type="button" data-view="notes">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="5" y="3" width="14" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
-        <line x1="9" y1="8" x2="15" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        <line x1="9" y1="16" x2="13" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-      </svg>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="9" y1="8" x2="15" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="9" y1="16" x2="13" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Notes</span>
     </button>
     <button class="nav-btn" type="button" data-view="more">
-      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="5" cy="12" r="2" fill="currentColor"/>
-        <circle cx="12" cy="12" r="2" fill="currentColor"/>
-        <circle cx="19" cy="12" r="2" fill="currentColor"/>
-      </svg>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/></svg>
       <span>More</span>
     </button>
   </nav>
