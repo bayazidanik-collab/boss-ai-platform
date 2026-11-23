@@ -98,9 +98,13 @@ export default class StorageAdapter {
   }
 
   static _openIdb(dbName) {
+    // ALWAYS settles within 3s: a stuck indexedDB.open must never hang boot.
     return new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+      setTimeout(() => done(null), 3000);
       try {
-        if (typeof indexedDB === 'undefined') return resolve(null);
+        if (typeof indexedDB === 'undefined') return done(null);
         const req = indexedDB.open(dbName, DB_VERSION);
         req.onupgradeneeded = () => {
           const db = req.result;
@@ -108,11 +112,11 @@ export default class StorageAdapter {
             db.createObjectStore(STORE_NAME, { keyPath: 'key' });
           }
         };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve(null);
-        req.onblocked = () => resolve(null);
+        req.onsuccess = () => done(req.result);
+        req.onerror = () => done(null);
+        req.onblocked = () => done(null);
       } catch (_) {
-        resolve(null);
+        done(null);
       }
     });
   }
