@@ -116,6 +116,13 @@ export default class ProjectEngine {
         String(p.description || '').toLowerCase().includes(q));
     }
     if (!filter.includeArchived) projects = projects.filter((p) => p.status !== 'Archived');
+    // Defensive dedupe by id (preserve order) — never show the same project twice.
+    const seen = new Set();
+    projects = projects.filter((p) => {
+      if (!p || typeof p.id !== 'string' || seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
     return projects;
   }
 
