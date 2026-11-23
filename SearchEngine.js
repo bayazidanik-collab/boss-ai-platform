@@ -63,7 +63,7 @@ export default class SearchEngine {
       const matches = [];
       for (const field of fields) {
         const raw = entity[field];
-        const values = Array.isArray(raw) ? raw.map(String) : [String(raw ?? '')];
+        const values = Array.isArray(raw) ? raw.map(String) : [String(raw == null ? '' : raw)];
         values.forEach((text, valueIndex) => {
           const found = this._matchText(text, q);
           for (const m of found) {
