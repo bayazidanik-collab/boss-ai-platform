@@ -2,21 +2,29 @@
  * TaskEngine.js — BOSS AI Personal Productivity Hub v1.0
  * Task lifecycle domain model. Pure logic over StorageAdapter; DOM-free.
  *
- * Workflow statuses: Inbox -> Next Action -> In Progress -> Waiting -> Completed
+ * Workflow statuses: Inbox -> Next Action -> In Progress -> Waiting -> Completed,
+ * plus Blocked (Phase 2 alignment with TaskStateMachine; see HUB_STATUS_MAP).
  * (transitions validated; see canTransition()).
  * Priorities: Low | Medium | High | Urgent.
  */
 
 export const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
-export const STATUSES = ['Inbox', 'Next Action', 'In Progress', 'Waiting', 'Completed'];
+export const STATUSES = ['Inbox', 'Next Action', 'In Progress', 'Waiting', 'Completed', 'Blocked'];
 
-/** Allowed status transitions (self-transitions are no-op allowed). */
+/**
+ * Allowed status transitions (self-transitions are no-op allowed).
+ * ADDITIVE Phase 2 change: 'Blocked' appended to open states + new 'Blocked'
+ * key. Every pre-existing path is unchanged (existing tasks/UI unbroken).
+ * Hub stays permissive on purpose (checkbox quick-complete = ANY -> Completed
+ * / Completed -> Inbox); TaskStateMachine keeps the strict agent-execution map.
+ */
 export const STATUS_TRANSITIONS = {
-  Inbox: ['Inbox', 'Next Action', 'In Progress', 'Waiting', 'Completed'],
-  'Next Action': ['Next Action', 'In Progress', 'Waiting', 'Completed', 'Inbox'],
-  'In Progress': ['In Progress', 'Waiting', 'Completed', 'Inbox'],
-  Waiting: ['Waiting', 'Next Action', 'In Progress', 'Completed', 'Inbox'],
+  Inbox: ['Inbox', 'Next Action', 'In Progress', 'Waiting', 'Completed', 'Blocked'],
+  'Next Action': ['Next Action', 'In Progress', 'Waiting', 'Completed', 'Inbox', 'Blocked'],
+  'In Progress': ['In Progress', 'Waiting', 'Completed', 'Inbox', 'Blocked'],
+  Waiting: ['Waiting', 'Next Action', 'In Progress', 'Completed', 'Inbox', 'Blocked'],
   Completed: ['Completed', 'Inbox', 'Next Action'],
+  Blocked: ['Blocked', 'Inbox', 'Next Action', 'In Progress', 'Waiting', 'Completed'],
 };
 
 const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
