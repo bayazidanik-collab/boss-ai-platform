@@ -33,6 +33,10 @@
   <header class="app-header" role="banner">
     <h1 class="app-title">BOSS AI Hub</h1>
     <div class="header-actions">
+      <button id="btn-workspace" class="ws-pill" type="button" aria-label="Switch workspace" aria-haspopup="dialog">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="4" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4" y="13" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <span id="ws-pill-name">Default</span>
+      </button>
       <button id="btn-search" class="icon-btn" type="button" aria-label="Open global search" aria-expanded="false">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
@@ -56,8 +60,7 @@
 
   <!-- ============ Banner slot (quota warnings) ============ -->
   <div id="banner-slot" class="banner-slot" role="alert" aria-live="assertive"></div>
-
-  <!-- ============ Main views ============ -->
+    <!-- ============ Main views ============ -->
   <main id="app-main" class="app-main">
 
     <!-- Dashboard -->
@@ -96,7 +99,7 @@
           <option>Medium</option>
           <option>Low</option>
         </select>
-                <input id="task-filter-tag" type="text" autocomplete="off" placeholder="Tag" aria-label="Filter by tag">
+        <input id="task-filter-tag" type="text" autocomplete="off" placeholder="Tag" aria-label="Filter by tag">
       </div>
       <ul id="task-list" class="card-list" aria-label="Task list"></ul>
     </section>
@@ -127,6 +130,15 @@
         <h3 class="section-title">Agent &amp; Policy Status (read-only)</h3>
         <div id="agent-policy-status" class="stat-grid" aria-label="Agent and policy status"></div>
         <p class="hint">Phase 2 agent core summary — read-only. This panel makes no network calls and never activates paid APIs.</p>
+      </div>
+
+      <div class="panel">
+        <h3 class="section-title">Products (Prompt Packs)</h3>
+        <p class="hint">Create a product workspace from a built-in pack. Importing packs and deleting workspaces always ask for explicit confirmation (Class B).</p>
+        <div id="pack-list" class="pack-list"></div>
+        <div class="btn-row">
+          <button id="btn-import-pack" class="btn btn-secondary" type="button">Import pack (JSON)</button>
+        </div>
       </div>
 
       <div class="panel">
