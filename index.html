@@ -12,6 +12,23 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <script>
+    /* Visible error trap: any script failure is shown on screen for diagnosis. */
+    function bossAiShowError(msg) {
+      try {
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:99999;background:#b00020;color:#fff;padding:12px;border-radius:8px;font:13px/1.45 monospace;white-space:pre-wrap';
+        d.textContent = 'BOSS AI Script Error (screenshot this and send it to support):\n' + msg;
+        document.body.appendChild(d);
+      } catch (_) {}
+    }
+    window.addEventListener('error', function (e) {
+      bossAiShowError((e.message || e.type) + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+    }, true);
+    window.addEventListener('unhandledrejection', function (e) {
+      bossAiShowError('Promise: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+    });
+  </script>
   <!-- ============ Sticky top header ============ -->
   <header class="app-header" role="banner">
     <h1 class="app-title">BOSS AI Hub</h1>
@@ -79,9 +96,11 @@
           <option>Low</option>
         </select>
         <input id="task-filter-tag" type="text" autocomplete="off" placeholder="Tag" aria-label="Filter by tag">
-      </div>
+              </div>
       <ul id="task-list" class="card-list" aria-label="Task list"></ul>
-    </section><!-- Projects -->
+    </section>
+
+    <!-- Projects -->
     <section id="view-projects" class="view" aria-label="Projects" hidden>
       <div class="section-head">
         <h2 class="view-title">Projects</h2>
