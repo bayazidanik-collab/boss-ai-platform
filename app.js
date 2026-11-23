@@ -552,7 +552,7 @@ async function openTaskForm(task) {
   const descInput = el('textarea', { 'aria-label': 'Task description', text: task ? task.description || '' : '' });
   const prioritySel = selectNode([['Urgent', 'Urgent'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low']], task ? task.priority : 'Medium', 'Priority');
   const statusSel = selectNode(
-    [['Inbox', 'Inbox'], ['Next Action', 'Next Action'], ['In Progress', 'In Progress'], ['Waiting', 'Waiting'], ['Completed', 'Completed']],
+    [['Inbox', 'Inbox'], ['Next Action', 'Next Action'], ['In Progress', 'In Progress'], ['Waiting', 'Waiting'], ['Completed', 'Completed'], ['Blocked', 'Blocked']],
     task ? task.status : 'Inbox', 'Status');
   const dueInput = el('input', { type: 'date', value: task && task.dueDate ? task.dueDate : '', 'aria-label': 'Due date' });
   const tagsInput = el('input', { type: 'text', value: task ? (task.tags || []).join(', ') : '', placeholder: 'comma, separated', 'aria-label': 'Tags' });
