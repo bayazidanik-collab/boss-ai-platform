@@ -10,7 +10,7 @@
  * Zero external origins are cached. No credentials, no cross-origin calls.
  */
 
-const CACHE_NAME = 'boss-ai-shell-v4'; // v4: Track B UI (workspace switcher + products)
+const CACHE_NAME = 'boss-ai-shell-v5'; // v5: active-view persistence across reload
 const SHELL_URLS = [
   './',
   './index.html',
