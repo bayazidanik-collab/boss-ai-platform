@@ -16,7 +16,7 @@ import { PROJECT_STATUSES } from './ProjectEngine.js';
 
 export const BACKUP_APP_ID = 'boss-ai-hub';
 export const BACKUP_VERSION = '1.0';
-export const BACKUP_COLLECTIONS = ['tasks', 'projects', 'notes', 'settings'];
+export const BACKUP_COLLECTIONS = ['tasks', 'projects', 'notes', 'settings', 'workspaces'];
 const WARNING_THRESHOLD = 0.8;
 const LOCAL_QUOTA_ESTIMATE = 5 * 1024 * 1024; // LocalStorage heuristic (chars ≈ UTF-16 units)
 
@@ -143,7 +143,7 @@ export default class BackupEngine {
         }
         if (typeof row.id !== 'string' || !row.id.trim()) errors.push(`${at}.id: non-empty string required`);
         for (const field of fields.strings) {
-          if (row[field] !== undefined && typeof row[field] !== 'string') errors.push(`${at}.${field}: must be a string`);
+          if (row[field] !== undefined && row[field] !== null && typeof row[field] !== 'string') errors.push(`${at}.${field}: must be a string`);
         }
         for (const field of fields.requiredStrings) {
           if (typeof row[field] !== 'string' || !row[field].trim()) errors.push(`${at}.${field}: non-empty string required`);
@@ -191,6 +191,11 @@ export default class BackupEngine {
       booleans: ['isPinned'],
     });
     checkRecords('settings', { requiredStrings: [], strings: [], tags: false });
+    checkRecords('workspaces', {
+      requiredStrings: ['name'],
+      strings: ['description', 'packId'],
+      enum: { status: ['active', 'archived'] },
+    });
   }
 
   /* ------------------------------------------------------------------ */
