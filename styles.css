@@ -485,6 +485,28 @@ mark.hit-mark {
 .pill.status-in-progress { color: var(--accent); border-color: var(--accent); }
 .pill.status-blocked { color: var(--warn); border-color: var(--warn); }
 
+/* Track B: workspace pill + prompt-pack list */
+.ws-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; max-width: 132px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: transparent; color: var(--text); font: inherit; font-size: 12px;
+}
+.ws-pill .icon { width: 16px; height: 16px; flex: none; }
+.ws-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pack-list { display: grid; gap: 10px; }
+.pack-item {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px; border: 1px solid var(--border); border-radius: 12px;
+}
+.pack-info { flex: 1 1 160px; min-width: 0; }
+.pack-name { font-weight: 600; }
+.pack-json-input {
+  width: 100%; min-height: 120px; padding: 10px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
