@@ -400,8 +400,13 @@ async function deleteTaskFlow(task) {
 /* Render: Projects                                                    */
 /* ================================================================== */
 
+let projectsRenderEpoch = 0;
+
 async function renderProjects() {
+  projectsRenderEpoch += 1;
+  const token = projectsRenderEpoch;
   const projects = await projectEngine.listProjects();
+  if (token !== projectsRenderEpoch) return; // superseded by a newer render
   const list = document.getElementById('project-list');
   clear(list);
   if (!projects.length) {
@@ -410,6 +415,7 @@ async function renderProjects() {
   }
   for (const project of projects) {
     const stats = await projectEngine.getProjectStats(project.id);
+    if (token !== projectsRenderEpoch) return; // superseded mid-paint
     const fill = el('div', { className: `meter-fill${stats.percent >= 100 ? '' : ''}`, style: `width:${stats.percent}%` });
     const card = el('li', { className: 'card' }, [
       el('div', { className: 'card-title-row' }, [
@@ -555,14 +561,13 @@ async function deleteNoteFlow(note) {
 /* ================================================================== */
 /* Render: More (storage meter)                                        */
 /* ================================================================== */
-
 async function refreshStorageMeter() {
   const usage = await backupEngine.calculateStorageUsage();
   const fill = document.getElementById('storage-fill');
   const text = document.getElementById('storage-text');
   const pct = Math.round(usage.ratio * 100);
   fill.style.width = `${pct}%`;
-    fill.className = `meter-fill${usage.warning ? ' warn' : ''}`;
+  fill.className = `meter-fill${usage.warning ? ' warn' : ''}`;
   const mb = (n) => `${(n / (1024 * 1024)).toFixed(2)} MB`;
   text.textContent = `${mb(usage.usedBytes)} used of ~${mb(usage.quotaBytes)} (${pct}%) · source: ${usage.source}`
     + (usage.warning ? ' · WARNING: above 80% — export a backup now.' : '');
@@ -732,13 +737,13 @@ function openImportPackModal() {
         title: 'Import pack?',
         message: 'CLASS B action. Register this external prompt pack after strict validation?',
         confirmLabel: 'Import pack',
-        danger: true,
+                danger: true,
       });
       if (!ok) return;
       try {
         await promptPack.importPack(area.value, { ownerApproved: true, approvedBy: 'owner (confirm modal)' });
         closeModal();
-                renderAll();
+        renderAll();
         toast('Pack imported.', 'success');
       } catch (err) {
         toast(String((err && err.message) || err), 'error');
@@ -1151,8 +1156,7 @@ async function boot() {
   bindWorkspace(workspaceEngine.activeWorkspaceId);
   initTheme();
   wireEvents();
-  renderAll();
-  setView(readSavedView());
+  setView(readSavedView()); // setView() renders — single render pass on boot (no duplicate paint race)
   registerServiceWorker();
 
   // Storage backend transparency for the About panel / debugging.
