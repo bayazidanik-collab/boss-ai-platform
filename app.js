@@ -217,9 +217,29 @@ const state = {
 
 const VIEW_IDS = ['dashboard', 'tasks', 'projects', 'notes', 'more'];
 
+/* Active-view persistence: the view name lives in the URL hash so a page
+   reload lands on the same view. Invalid/missing hash falls back to
+   'dashboard'. Preference sync never blocks the UI (silent try/catch). */
+function readSavedView() {
+  try {
+    const raw = String(window.location.hash || '').replace(/^#/, '').trim();
+    if (VIEW_IDS.includes(raw)) return raw;
+  } catch (_) { /* private mode / missing location */ }
+  return 'dashboard';
+}
+
+function saveView(name) {
+  try {
+    if (String(window.location.hash || '').replace(/^#/, '') !== name) {
+      window.history.replaceState(null, '', '#' + name);
+    }
+  } catch (_) { /* never block UI on preference sync */ }
+}
+
 function setView(name) {
   if (!VIEW_IDS.includes(name)) return;
   state.view = name;
+  saveView(name);
   for (const view of VIEW_IDS) {
     const section = document.getElementById(`view-${view}`);
     if (section) section.hidden = view !== name;
@@ -542,7 +562,7 @@ async function refreshStorageMeter() {
   const text = document.getElementById('storage-text');
   const pct = Math.round(usage.ratio * 100);
   fill.style.width = `${pct}%`;
-  fill.className = `meter-fill${usage.warning ? ' warn' : ''}`;
+    fill.className = `meter-fill${usage.warning ? ' warn' : ''}`;
   const mb = (n) => `${(n / (1024 * 1024)).toFixed(2)} MB`;
   text.textContent = `${mb(usage.usedBytes)} used of ~${mb(usage.quotaBytes)} (${pct}%) · source: ${usage.source}`
     + (usage.warning ? ' · WARNING: above 80% — export a backup now.' : '');
@@ -562,7 +582,7 @@ async function renderAgentPolicyStatus() {
   try { agents = await agentRegistry.list(); } catch (_) { /* keep defaults */ }
   try { health = await aiAdapter.healthCheck(); } catch (_) { /* keep defaults */ }
   const active = agents.filter((a) => a.status === 'enabled');
-    const rows = [
+  const rows = [
     [`${agents.length} / ${active.length}`, 'Agents registered / active'],
     ['CLASS_A', 'automatic — local, safe actions'],
     ['CLASS_B', 'owner approval required (ownerApproved: true)'],
@@ -718,7 +738,7 @@ function openImportPackModal() {
       try {
         await promptPack.importPack(area.value, { ownerApproved: true, approvedBy: 'owner (confirm modal)' });
         closeModal();
-        renderAll();
+                renderAll();
         toast('Pack imported.', 'success');
       } catch (err) {
         toast(String((err && err.message) || err), 'error');
@@ -738,7 +758,7 @@ function formField(labelText, inputNode) {
 function selectNode(options, value, ariaLabel) {
   return el('select', { 'aria-label': ariaLabel }, options.map(([v, label]) =>
     el('option', { value: v, text: label, selected: v === value || undefined })));
-  }
+}
 
 async function openTaskForm(task) {
   const projects = await projectEngine.listProjects();
@@ -1132,7 +1152,7 @@ async function boot() {
   initTheme();
   wireEvents();
   renderAll();
-  setView('dashboard');
+  setView(readSavedView());
   registerServiceWorker();
 
   // Storage backend transparency for the About panel / debugging.
