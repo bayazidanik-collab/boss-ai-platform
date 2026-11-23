@@ -46,6 +46,7 @@ export const APPROVAL_ACTIONS = new Set([
   'repo_visibility_change', 'repo_config_change',
   'send_email', 'send_webhook', 'external_message', 'create_account', 'third_party_signup',
   'production_deploy', 'deploy_production', 'external_api_call',
+  'import_pack', 'delete_workspace', 'reset_workspace',
 ]);
 
 /** Known-safe local action names (CLASS_A). */
@@ -56,6 +57,7 @@ export const LOCAL_ACTIONS = new Set([
   'local_qa', 'local_qa_script', 'static_analysis', 'static_security_analysis',
   'local_read', 'local_search', 'local_query', 'local_write', 'memory_read', 'memory_write',
   'task_transition', 'echo', 'status_check', 'health_check',
+  'instantiate_pack', 'create_workspace', 'archive_workspace',
 ]);
 
 function normalize(action) {
