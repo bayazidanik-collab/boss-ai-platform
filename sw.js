@@ -10,7 +10,7 @@
  * Zero external origins are cached. No credentials, no cross-origin calls.
  */
 
-const CACHE_NAME = 'boss-ai-shell-v5'; // v5: active-view persistence across reload
+const CACHE_NAME = 'boss-ai-shell-v6'; // v6: fix duplicate project card on reload (render race)
 const SHELL_URLS = [
   './',
   './index.html',
