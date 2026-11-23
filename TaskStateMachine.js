@@ -24,6 +24,36 @@ export const STATE_TRANSITIONS = {
   'Completed': ['Next Action', 'In Progress'],
 };
 
+/**
+ * Hub bridge — TaskEngine.js status vocabulary is IDENTICAL (1:1 direct map).
+ * 'Blocked' maps DIRECTLY at the data layer (no adapter/filter rule needed).
+ * Transition RULES intentionally differ per system and are validated locally:
+ *   - Hub TaskEngine: permissive user workflow (checkbox quick-complete).
+ *   - This machine: strict deterministic agent execution.
+ */
+export const HUB_STATUS_MAP = {
+  'Inbox': 'Inbox', 'Next Action': 'Next Action', 'In Progress': 'In Progress',
+  'Waiting': 'Waiting', 'Completed': 'Completed', 'Blocked': 'Blocked',
+};
+
+/** Map a machine state to the Hub status (identity; validates membership). */
+export function toHubStatus(state) {
+  const mapped = HUB_STATUS_MAP[state];
+  if (mapped === undefined) {
+    throw new Error(`toHubStatus: unknown state '${String(state)}' — valid: ${TASK_STATES.join(', ')}`);
+  }
+  return mapped;
+}
+
+/** Map a Hub status to the machine state (identity; validates membership). */
+export function fromHubStatus(status) {
+  const mapped = HUB_STATUS_MAP[status];
+  if (mapped === undefined) {
+    throw new Error(`fromHubStatus: unknown hub status '${String(status)}' — valid: ${TASK_STATES.join(', ')}`);
+  }
+  return mapped;
+}
+
 export default class TaskStateMachine {
   /**
    * @param {{onTransition?: function(object):void}} [options]
