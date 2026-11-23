@@ -64,6 +64,12 @@ export default class WorkspaceEngine {
 
   /** Activate a workspace for subsequent scopedEngines() default. Persists choice. */
   async activateWorkspace(id) {
+    const target = String(id);
+    if (target === WorkspaceScope.DEFAULT_WORKSPACE_ID) {
+      this.activeWorkspaceId = WorkspaceScope.DEFAULT_WORKSPACE_ID;
+      await this.storage.put(SETTINGS_COLLECTION, { id: ACTIVE_STATE_ID, workspaceId: this.activeWorkspaceId });
+      return { id: this.activeWorkspaceId, name: 'Default', description: 'Built-in default workspace', status: 'active' };
+    }
     const ws = await this.getWorkspace(id);
     if (!ws) throw new Error('Unknown workspace: ' + id);
     if (ws.status === 'archived') throw new Error('Workspace is archived: ' + id);
