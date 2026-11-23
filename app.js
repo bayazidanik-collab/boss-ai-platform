@@ -16,6 +16,8 @@ import SearchEngine from './SearchEngine.js';
 import BackupEngine from './BackupEngine.js';
 import AgentRegistry from './AgentRegistry.js';
 import AIAdapter from './AIAdapter.js';
+import WorkspaceEngine from './WorkspaceEngine.js';
+import PromptPack from './PromptPack.js';
 
 /* ================================================================== */
 /* Safe DOM helpers                                                    */
@@ -182,17 +184,31 @@ const storage = new StorageAdapter({
   },
 });
 
-const taskEngine = new TaskEngine(storage);
-const projectEngine = new ProjectEngine(storage, taskEngine);
-const noteEngine = new NoteEngine(storage);
-const searchEngine = new SearchEngine(storage);
 const backupEngine = new BackupEngine(storage);
+const workspaceEngine = new WorkspaceEngine(storage);
+const promptPack = new PromptPack({ workspaceEngine });
+
+/* Engines are workspace-scoped (WorkspaceScope). bindWorkspace() rebinds them
+   whenever the active workspace changes. Legacy data lives in 'ws-default'. */
+let taskEngine = null;
+let projectEngine = null;
+let noteEngine = null;
+let searchEngine = null;
+
+function bindWorkspace(workspaceId) {
+    const bundle = workspaceEngine.scopedEngines(workspaceId);
+  taskEngine = bundle.taskEngine;
+  projectEngine = bundle.projectEngine;
+  noteEngine = bundle.noteEngine;
+  searchEngine = bundle.searchEngine;
+  return bundle;
+}
 const agentRegistry = new AgentRegistry(storage);
 const aiAdapter = new AIAdapter(); // offline-mock default — zero paid calls, zero network
 
 const state = {
   view: 'dashboard',
-    taskFilter: { search: '', status: '', priority: '', tag: '' },
+  taskFilter: { search: '', status: '', priority: '', tag: '' },
 };
 
 /* ================================================================== */
@@ -460,7 +476,7 @@ async function deleteProjectFlow(project) {
   } catch (err) {
     toast(err.message || 'Could not delete project.', 'error');
   }
-    renderAll();
+  renderAll();
 }
 
 /* ================================================================== */
@@ -546,7 +562,7 @@ async function renderAgentPolicyStatus() {
   try { agents = await agentRegistry.list(); } catch (_) { /* keep defaults */ }
   try { health = await aiAdapter.healthCheck(); } catch (_) { /* keep defaults */ }
   const active = agents.filter((a) => a.status === 'enabled');
-  const rows = [
+    const rows = [
     [`${agents.length} / ${active.length}`, 'Agents registered / active'],
     ['CLASS_A', 'automatic — local, safe actions'],
     ['CLASS_B', 'owner approval required (ownerApproved: true)'],
@@ -562,6 +578,156 @@ async function renderAgentPolicyStatus() {
 }
 
 /* ================================================================== */
+/* ================================================================== */
+/* Track B: Workspace switcher + Products (Prompt Packs)               */
+/* ================================================================== */
+
+async function renderWorkspaceUI() {
+  const label = document.getElementById('ws-pill-name');
+  if (!label) return;
+  if (workspaceEngine.activeWorkspaceId === 'ws-default') {
+    label.textContent = 'Default';
+    return;
+  }
+  try {
+    const ws = await workspaceEngine.getWorkspace(workspaceEngine.activeWorkspaceId);
+    label.textContent = ws ? ws.name : 'Default';
+  } catch (_) {
+    label.textContent = 'Default';
+  }
+}
+
+async function renderPackList() {
+  const box = document.getElementById('pack-list');
+  if (!box) return;
+  clear(box);
+  const packs = promptPack.listPacks();
+  for (const p of packs) {
+    const useBtn = el('button', {
+      className: 'btn btn-primary', type: 'button', text: 'New from Pack',
+      onClick: () => instantiatePackFlow(p.id, p.name),
+    });
+    box.appendChild(el('div', { className: 'pack-item' }, [
+      el('div', { className: 'pack-info' }, [
+        el('div', { className: 'pack-name', text: p.name }),
+        el('div', { className: 'hint', text: p.description }),
+      ]),
+      useBtn,
+    ]));
+  }
+}
+
+async function switchWorkspaceFlow(workspaceId) {
+  try {
+    await workspaceEngine.activateWorkspace(workspaceId);
+    bindWorkspace(workspaceEngine.activeWorkspaceId);
+    closeModal();
+    renderAll();
+    toast('Workspace switched.', 'success');
+  } catch (err) {
+    toast(String((err && err.message) || err), 'error');
+  }
+}
+
+async function openWorkspaceModal() {
+  const list = el('div', { className: 'pack-list' });
+  const rows = [{ id: 'ws-default', name: 'Default', description: 'Built-in default workspace', status: 'active' }];
+  try {
+    const others = await workspaceEngine.listWorkspaces();
+    for (const ws of others) rows.push(ws);
+  } catch (_) { /* list stays minimal */ }
+  for (const ws of rows) {
+    const active = ws.id === workspaceEngine.activeWorkspaceId;
+    const switchBtn = el('button', {
+      className: 'btn ' + (active ? 'btn-primary' : 'btn-secondary'),
+      type: 'button',
+      text: active ? 'Active' : 'Switch',
+      onClick: () => switchWorkspaceFlow(ws.id),
+    });
+    const row = el('div', { className: 'pack-item' }, [
+      el('div', { className: 'pack-info' }, [
+        el('div', { className: 'pack-name', text: ws.name }),
+        el('div', { className: 'hint', text: (ws.description || '') + (ws.status === 'archived' ? ' · archived' : '') }),
+      ]),
+      switchBtn,
+    ]);
+    if (ws.id !== 'ws-default') {
+      row.appendChild(el('button', {
+        className: 'btn btn-danger', type: 'button', text: 'Delete',
+        onClick: () => deleteWorkspaceFlow(ws.id, ws.name),
+      }));
+    }
+    list.appendChild(row);
+  }
+  openModal({ title: 'Workspaces', node: list, actions: [] });
+}
+
+async function deleteWorkspaceFlow(workspaceId, name) {
+  const ok = await confirmModal({
+    title: 'Delete workspace?',
+    message: 'CLASS B action. This permanently deletes "' + name + '" and ALL of its tasks, projects and notes. This cannot be undone.',
+    confirmLabel: 'Delete workspace',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await workspaceEngine.deleteWorkspace(workspaceId, { ownerApproved: true, approvedBy: 'owner (confirm modal)' });
+    bindWorkspace(workspaceEngine.activeWorkspaceId);
+    closeModal();
+    renderAll();
+    toast('Workspace deleted.', 'success');
+  } catch (err) {
+    toast(String((err && err.message) || err), 'error');
+  }
+}
+
+async function instantiatePackFlow(packId, packName) {
+  const ok = await confirmModal({
+    title: 'New product from pack?',
+    message: 'Create a new workspace from "' + packName + '" and seed its starter tasks, projects and notes? (local, Class A)',
+    confirmLabel: 'Create workspace',
+  });
+  if (!ok) return;
+  try {
+    const result = await promptPack.instantiate(packId);
+    await workspaceEngine.activateWorkspace(result.workspace.id);
+    bindWorkspace(workspaceEngine.activeWorkspaceId);
+    closeModal();
+    setView('dashboard');
+    toast('Product workspace created.', 'success');
+  } catch (err) {
+    toast(String((err && err.message) || err), 'error');
+  }
+}
+
+function openImportPackModal() {
+  const area = el('textarea', {
+    className: 'pack-json-input', rows: '6',
+    placeholder: 'Paste pack JSON here…', 'aria-label': 'Prompt pack JSON',
+  });
+  const importBtn = el('button', {
+    className: 'btn btn-primary', type: 'button', text: 'Import pack (Class B)',
+    onClick: async () => {
+      const ok = await confirmModal({
+        title: 'Import pack?',
+        message: 'CLASS B action. Register this external prompt pack after strict validation?',
+        confirmLabel: 'Import pack',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await promptPack.importPack(area.value, { ownerApproved: true, approvedBy: 'owner (confirm modal)' });
+        closeModal();
+        renderAll();
+        toast('Pack imported.', 'success');
+      } catch (err) {
+        toast(String((err && err.message) || err), 'error');
+      }
+    },
+  });
+  openModal({ title: 'Import prompt pack (JSON)', node: area, actions: [importBtn] });
+}
+
 /* Forms: Task / Project / Note                                        */
 /* ================================================================== */
 
@@ -572,7 +738,7 @@ function formField(labelText, inputNode) {
 function selectNode(options, value, ariaLabel) {
   return el('select', { 'aria-label': ariaLabel }, options.map(([v, label]) =>
     el('option', { value: v, text: label, selected: v === value || undefined })));
-}
+  }
 
 async function openTaskForm(task) {
   const projects = await projectEngine.listProjects();
@@ -708,7 +874,7 @@ async function openNoteForm(note) {
 
   const save = async () => {
     try {
-            const payload = {
+      const payload = {
         title: titleInput.value,
         content: contentInput.value,
         tags: noteEngine.parseTags(tagsInput.value),
@@ -886,6 +1052,8 @@ function renderAll() {
   renderNotes();
   refreshStorageMeter();
   renderAgentPolicyStatus();
+  renderWorkspaceUI();
+  renderPackList();
 }
 
 function wireEvents() {
@@ -894,6 +1062,9 @@ function wireEvents() {
   });
 
   document.getElementById('btn-theme').addEventListener('click', toggleTheme);
+  document.getElementById('btn-workspace').addEventListener('click', openWorkspaceModal);
+  const btnImportPack = document.getElementById('btn-import-pack');
+  if (btnImportPack) btnImportPack.addEventListener('click', openImportPackModal);
   document.getElementById('btn-search').addEventListener('click', () => {
     const panel = document.getElementById('search-panel');
     if (panel.hidden) openSearchPanel();
@@ -956,6 +1127,8 @@ function registerServiceWorker() {
 
 async function boot() {
   const backend = await storage.init();
+  await workspaceEngine.restoreActiveWorkspace();
+  bindWorkspace(workspaceEngine.activeWorkspaceId);
   initTheme();
   wireEvents();
   renderAll();
