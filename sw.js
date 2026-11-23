@@ -10,7 +10,7 @@
  * Zero external origins are cached. No credentials, no cross-origin calls.
  */
 
-const CACHE_NAME = 'boss-ai-shell-v3'; // v3: flush stale SearchEngine.js (wrong-content cache)
+const CACHE_NAME = 'boss-ai-shell-v4'; // v4: Track B UI (workspace switcher + products)
 const SHELL_URLS = [
   './',
   './index.html',
