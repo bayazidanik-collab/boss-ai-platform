@@ -14,6 +14,8 @@ import ProjectEngine from './ProjectEngine.js';
 import NoteEngine from './NoteEngine.js';
 import SearchEngine from './SearchEngine.js';
 import BackupEngine from './BackupEngine.js';
+import AgentRegistry from './AgentRegistry.js';
+import AIAdapter from './AIAdapter.js';
 
 /* ================================================================== */
 /* Safe DOM helpers                                                    */
@@ -185,10 +187,12 @@ const projectEngine = new ProjectEngine(storage, taskEngine);
 const noteEngine = new NoteEngine(storage);
 const searchEngine = new SearchEngine(storage);
 const backupEngine = new BackupEngine(storage);
+const agentRegistry = new AgentRegistry(storage);
+const aiAdapter = new AIAdapter(); // offline-mock default — zero paid calls, zero network
 
 const state = {
   view: 'dashboard',
-  taskFilter: { search: '', status: '', priority: '', tag: '' },
+    taskFilter: { search: '', status: '', priority: '', tag: '' },
 };
 
 /* ================================================================== */
@@ -456,7 +460,7 @@ async function deleteProjectFlow(project) {
   } catch (err) {
     toast(err.message || 'Could not delete project.', 'error');
   }
-  renderAll();
+    renderAll();
 }
 
 /* ================================================================== */
@@ -528,6 +532,32 @@ async function refreshStorageMeter() {
     + (usage.warning ? ' · WARNING: above 80% — export a backup now.' : '');
   if (usage.warning) {
     showBanner('Storage usage is above 80%. Export a JSON backup and free space to avoid data loss.', 'Export now', () => setView('more'));
+  }
+}
+
+/* Render: More — read-only Agent & Policy status (Phase 2 core).      */
+/* Non-destructive: displays only; no writes, no network, no paid API. */
+async function renderAgentPolicyStatus() {
+  const box = document.getElementById('agent-policy-status');
+  if (!box) return;
+  clear(box);
+  let agents = [];
+  let health = { mode: 'offline-mock', provider: 'offline-mock', usage: { calls: 0 } };
+  try { agents = await agentRegistry.list(); } catch (_) { /* keep defaults */ }
+  try { health = await aiAdapter.healthCheck(); } catch (_) { /* keep defaults */ }
+  const active = agents.filter((a) => a.status === 'enabled');
+  const rows = [
+    [`${agents.length} / ${active.length}`, 'Agents registered / active'],
+    ['CLASS_A', 'automatic — local, safe actions'],
+    ['CLASS_B', 'owner approval required (ownerApproved: true)'],
+    ['CLASS_C', 'blocked — zero-spend · no secrets'],
+    [String(health.mode), `AI adapter · zero paid calls · ${health.usage.calls} session calls`],
+  ];
+  for (const [value, label] of rows) {
+    box.appendChild(el('div', { className: 'stat-card' }, [
+      el('div', { className: 'stat-value', text: value }),
+      el('div', { className: 'stat-label', text: label }),
+    ]));
   }
 }
 
@@ -678,7 +708,7 @@ async function openNoteForm(note) {
 
   const save = async () => {
     try {
-      const payload = {
+            const payload = {
         title: titleInput.value,
         content: contentInput.value,
         tags: noteEngine.parseTags(tagsInput.value),
@@ -855,6 +885,7 @@ function renderAll() {
   renderProjects();
   renderNotes();
   refreshStorageMeter();
+  renderAgentPolicyStatus();
 }
 
 function wireEvents() {
