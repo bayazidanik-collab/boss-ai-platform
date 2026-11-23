@@ -22,6 +22,12 @@ export const STATUS_TRANSITIONS = {
 const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Priority sort rank (9 = unknown). ES2017-safe: no ?? operator. */
+function pRank(task) {
+  const r = PRIORITY_RANK[task.priority];
+  return r === undefined ? 9 : r;
+}
+
 export default class TaskEngine {
   /** @param {import('./StorageAdapter.js').default} storage */
   constructor(storage) {
@@ -149,7 +155,7 @@ export default class TaskEngine {
         String(t.description || '').toLowerCase().includes(q) ||
         (t.tags || []).some((tag) => String(tag).toLowerCase().includes(q)));
     }
-    return tasks.sort((a, b) => (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9));
+    return tasks.sort((a, b) => pRank(a) - pRank(b));
   }
 
   /** Daily Focus: due today OR High/Urgent priority, excluding Completed. */
@@ -160,14 +166,15 @@ export default class TaskEngine {
       .filter((t) => t.status !== 'Completed' && (t.dueDate === today || t.priority === 'High' || t.priority === 'Urgent'))
       .sort((a, b) => {
         const due = String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'));
-        return due !== 0 ? due : (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+        return due !== 0 ? due : pRank(a) - pRank(b);
       });
   }
 
   /** Dashboard counters. */
   async countByStatus() {
     const tasks = await this.storage.list(this.collection);
-    const counts = Object.fromEntries(STATUSES.map((s) => [s, 0]));
+    const counts = {};
+    for (const s of STATUSES) counts[s] = 0;
     for (const t of tasks) {
       if (counts[t.status] !== undefined) counts[t.status] += 1;
     }
