@@ -180,9 +180,8 @@ const storage = new StorageAdapter({
   },
 });
 
-const backend = await storage.init();
 const taskEngine = new TaskEngine(storage);
-const projectEngine = new ProjectEngine(storage);
+const projectEngine = new ProjectEngine(storage, taskEngine);
 const noteEngine = new NoteEngine(storage);
 const searchEngine = new SearchEngine(storage);
 const backupEngine = new BackupEngine(storage);
@@ -191,6 +190,7 @@ const state = {
   view: 'dashboard',
   taskFilter: { search: '', status: '', priority: '', tag: '' },
 };
+
 /* ================================================================== */
 /* View switching                                                      */
 /* ================================================================== */
@@ -458,7 +458,6 @@ async function deleteProjectFlow(project) {
   }
   renderAll();
 }
-
 
 /* ================================================================== */
 /* Render: Notes                                                       */
@@ -924,11 +923,28 @@ function registerServiceWorker() {
   } catch (_) { /* non-fatal */ }
 }
 
-initTheme();
-wireEvents();
-renderAll();
-setView('dashboard');
-registerServiceWorker();
+async function boot() {
+  const backend = await storage.init();
+  initTheme();
+  wireEvents();
+  renderAll();
+  setView('dashboard');
+  registerServiceWorker();
 
-// Storage backend transparency for the About panel / debugging.
-console.info(`[BOSS AI Hub v1.0] ready · storage backend: ${backend} · schemaVersion: ${storage.schemaVersion}`);
+  // Storage backend transparency for the About panel / debugging.
+  console.info(`[BOSS AI Hub v1.0] ready · storage backend: ${backend} · schemaVersion: ${storage.schemaVersion}`);
+}
+
+function showFatal(err) {
+  const msg = 'BOSS AI startup error: ' + (err && err.message ? err.message : String(err));
+  try {
+    const slot = document.getElementById('banner-slot');
+    if (slot) {
+      clear(slot);
+      slot.appendChild(el('div', { className: 'banner' }, [el('span', { className: 'banner-text', text: msg })]));
+    }
+  } catch (_) { /* ignore */ }
+  if (typeof console !== 'undefined') console.error(msg);
+}
+
+boot().catch(showFatal);
