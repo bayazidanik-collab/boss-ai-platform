@@ -483,6 +483,7 @@ mark.hit-mark {
 
 .pill.status-completed { color: var(--ok); border-color: var(--ok); }
 .pill.status-in-progress { color: var(--accent); border-color: var(--accent); }
+.pill.status-blocked { color: var(--warn); border-color: var(--warn); }
 
 .chip {
   display: inline-flex;
