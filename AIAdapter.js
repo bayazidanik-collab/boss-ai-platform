@@ -1,26 +1,32 @@
 /**
  * AIAdapter.js — BOSS AI Phase 2 · Autonomous Agent Core
- * Provider-independent LLM bridge.
+ * Provider-independent LLM bridge with a DEFAULT OFFLINE / MOCK mode.
  *
  * Standard interface (all adapters):
  *   complete(prompt, config) -> Promise<{text, usage, provider, model}>
- *   stream(prompt, config)   -> AsyncGenerator<{delta, done}> (scaffold)
+ *   run(task, config)        -> Promise<{text, usage, provider, model, task}>
+ *   healthCheck()            -> Promise<{ok, mode, provider, model, usage, notes}>
  *
- * Adapters: OpenAI · Anthropic · Gemini · Ollama (local, zero-cost).
- * Downstream code never touches provider schemas — swap freely.
+ * DEFAULT MODE: 'offline-mock' — deterministic, local, ZERO paid calls and
+ * ZERO network traffic. External providers are opt-in and policy-gated:
+ *   - Unapproved external network calls are CLASS_C (blocked) — a provider
+ *     call only runs with config.ownerApproved: true.
+ *   - paidPlan: true sets requiresPaidSpend and is BLOCKED by zero-spend policy.
+ *   - UsageTracker hard-stops before any configured ceiling (Runtime Safeguards).
  *
- * BUDGET SAFEGUARDS (Master System Context):
- *   - UsageTracker records calls/tokens per session and hard-stops before
- *     any configured ceiling (Runtime Safeguards).
- *   - Paid API calls are Class B actions; adapters refuse to send when the
- *     tracker is exhausted.
- *   - ZERO hardcoded secrets: apiKey arrives at runtime only. Missing keys
- *     are tagged [OWNER INPUT REQUIRED] — never invented.
- *   - Free-tier quotas vary and drift: [VERIFY AGAINST CURRENT PROVIDER TERMS].
+ * ZERO hardcoded secrets: apiKey arrives at runtime only. Missing keys are
+ * tagged [OWNER INPUT REQUIRED] — never invented.
+ * Free-tier quotas vary and drift: [VERIFY AGAINST CURRENT PROVIDER TERMS].
+ *
+ * Security: DOM-free module (zero innerHTML / outerHTML / document.write).
+ * Syntax: ES2017-safe (no ?? / ?. / Object.fromEntries / top-level await).
  */
 
-export const PROVIDERS = ['openai', 'anthropic', 'gemini', 'ollama'];
+import PolicyEvaluator from './PolicyEvaluator.js';
+
+export const PROVIDERS = ['offline', 'openai', 'anthropic', 'gemini', 'ollama'];
 const OWNER_INPUT = '[OWNER INPUT REQUIRED]';
+const VERIFY = '[VERIFY AGAINST CURRENT PROVIDER TERMS]';
 
 /* ------------------------------------------------------------------ */
 /* UsageTracker — local quota monitor with hard stop                   */
@@ -60,17 +66,26 @@ export class UsageTracker {
 }
 
 /* ------------------------------------------------------------------ */
-/* Base adapter                                                        */
+/* Base adapter — DEFAULT OFFLINE MOCK (zero paid calls)               */
 /* ------------------------------------------------------------------ */
 
 export default class AIAdapter {
   /**
-   * @param {{apiKey?: string, baseUrl?: string, model?: string, usageTracker?: UsageTracker, fetchImpl?: function}} options
+   * @param {{mode?: 'offline-mock'|'external', provider?: string, apiKey?: string,
+   *          baseUrl?: string, model?: string, paidPlan?: boolean,
+   *          policyEvaluator?: PolicyEvaluator, usageTracker?: UsageTracker,
+   *          fetchImpl?: function}} [options]
    */
   constructor(options = {}) {
+    this.mode = options.mode === 'external' ? 'external' : 'offline-mock';
+    this.provider = options.provider || 'offline-mock';
     this.apiKey = options.apiKey || OWNER_INPUT;
     this.baseUrl = String(options.baseUrl || '').replace(/\/$/, '');
-    this.model = options.model || '';
+    this.model = options.model || 'mock-v1';
+    this.paidPlan = options.paidPlan === true;
+    this.policy = options.policyEvaluator instanceof PolicyEvaluator
+      ? options.policyEvaluator
+      : new PolicyEvaluator();
     this.usageTracker = options.usageTracker instanceof UsageTracker ? options.usageTracker : new UsageTracker();
     this._fetch = options.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   }
@@ -79,18 +94,96 @@ export default class AIAdapter {
     return Boolean(this.apiKey) && this.apiKey !== OWNER_INPUT;
   }
 
-  /** @throws when the session budget is exhausted (hard stop, pre-flight). */
-  _preFlight() {
+  /**
+   * Pre-flight for EXTERNAL calls: usage hard-stop + policy gate.
+   * Offline/mock mode never reaches this path.
+   * @throws when policy blocks (CLASS_C unapproved external / zero-spend)
+   *         or the local usage ceiling is exhausted.
+   */
+  _preFlightExternal(config = {}) {
     if (!this.usageTracker.canSpend(0)) {
       throw new Error('AIAdapter: local usage limit reached — hard stop before external rate limits (Runtime Safeguards)');
     }
     if (!this._fetch) {
       throw new Error('AIAdapter: no fetch implementation available in this runtime');
     }
+    const verdict = this.policy.evaluate({
+      action: 'external_api_call',
+      externalNetwork: true,
+      costEstimate: 0, // free-tier assumption — VERIFY AGAINST CURRENT PROVIDER TERMS
+      requiresPaidSpend: this.paidPlan,
+      ownerApproved: config.ownerApproved === true,
+    });
+    if (!verdict.allowed) {
+      throw new Error(`AIAdapter: blocked by policy — ${verdict.reason}`);
+    }
+    return verdict;
   }
 
-  async complete(/* prompt, config */) {
-    throw new Error('AIAdapter.complete(): not implemented — use a concrete provider adapter');
+  /** Pre-flight for LOCAL calls (e.g. Ollama daemon): usage hard-stop only. */
+  _preFlightLocal() {
+    if (!this.usageTracker.canSpend(0)) {
+      throw new Error('AIAdapter: local usage limit reached — hard stop (Runtime Safeguards)');
+    }
+    if (!this._fetch) {
+      throw new Error('AIAdapter: no fetch implementation available in this runtime');
+    }
+  }
+
+  /**
+   * DEFAULT: deterministic offline mock. Zero paid calls, zero network.
+   * External adapters override this and must pass _preFlightExternal().
+   */
+  async complete(prompt, config = {}) {
+    const text = String(prompt == null ? '' : prompt);
+    const trimmed = text.length > 160 ? text.slice(0, 160) + '…' : text;
+    const usage = this.usageTracker.record(0);
+    return {
+      text: `[offline-mock · zero paid calls] processed: ${trimmed}`,
+      usage,
+      provider: this.provider,
+      model: this.model,
+      mode: this.mode,
+    };
+  }
+
+  /**
+   * Task runner: { goal, input?, format? } -> complete().
+   * Local and deterministic in offline mode.
+   */
+  async run(task, config = {}) {
+    const t = task || {};
+    const goal = String(t.goal || t.prompt || '');
+    const input = t.input === undefined ? '' : String(t.input);
+    const format = t.format ? ` (output format: ${t.format})` : '';
+    const prompt = `Goal: ${goal}${format}\nInput: ${input}`;
+    const result = await this.complete(prompt, config);
+    return { ...result, task: { goal, input, format: t.format || '' } };
+  }
+
+  /**
+   * Health check — never performs paid/network calls in offline mode.
+   * External modes report configuration state only (no network probe).
+   */
+  async healthCheck() {
+    const notes = [];
+    if (this.mode === 'offline-mock') {
+      notes.push('offline-mock mode: zero paid calls, zero network traffic');
+    } else {
+      notes.push(`external provider '${this.provider}' — policy-gated; ownerApproved required per call`);
+      notes.push(`free-tier limits ${VERIFY}`);
+      notes.push(`model '${this.model}' availability ${VERIFY}`);
+      if (!this.hasCredentials && this.provider !== 'ollama') notes.push(`apiKey ${OWNER_INPUT}`);
+      if (this.paidPlan) notes.push('paidPlan enabled — zero-spend policy will BLOCK all calls');
+    }
+    return {
+      ok: true,
+      mode: this.mode,
+      provider: this.provider,
+      model: this.model,
+      usage: this.usageTracker.summary(),
+      notes,
+    };
   }
 
   /** Streaming scaffold: override in concrete adapters. */
@@ -113,22 +206,33 @@ export default class AIAdapter {
 }
 
 /* ------------------------------------------------------------------ */
-/* Concrete adapters                                                   */
+/* MockAdapter — explicit offline adapter (also the default)           */
+/* ------------------------------------------------------------------ */
+
+export class MockAdapter extends AIAdapter {
+  constructor(options = {}) {
+    super({ ...options, mode: 'offline-mock', provider: 'offline-mock', model: 'mock-v1' });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Concrete external adapters (policy-gated, ownerApproved required)   */
 /* ------------------------------------------------------------------ */
 
 export class OpenAIAdapter extends AIAdapter {
   constructor(options = {}) {
     super({
       ...options,
+      mode: 'external',
+      provider: 'openai',
       baseUrl: options.baseUrl || 'https://api.openai.com/v1',
-      model: options.model || 'gpt-4o', // [VERIFY AGAINST CURRENT PROVIDER TERMS]
+      model: options.model || 'gpt-4o', // VERIFY AGAINST CURRENT PROVIDER TERMS
     });
-    this.provider = 'openai';
   }
 
   async complete(prompt, config = {}) {
-    this._preFlight();
-    if (!this.hasCredentials) throw new Error('OpenAIAdapter: apiKey [OWNER INPUT REQUIRED]');
+    this._preFlightExternal(config);
+    if (!this.hasCredentials) throw new Error(`OpenAIAdapter: apiKey ${OWNER_INPUT}`);
     const data = await this._sendJson(
       `${this.baseUrl}/chat/completions`,
       { Authorization: `Bearer ${this.apiKey}` },
@@ -141,7 +245,7 @@ export class OpenAIAdapter extends AIAdapter {
     const text = data.choices && data.choices[0] && data.choices[0].message
       ? data.choices[0].message.content : '';
     const usage = this.usageTracker.record(data.usage ? data.usage.total_tokens : 0);
-    return { text, usage, provider: this.provider, model: data.model || this.model };
+    return { text, usage, provider: this.provider, model: data.model || this.model, mode: this.mode };
   }
 }
 
@@ -149,15 +253,16 @@ export class AnthropicAdapter extends AIAdapter {
   constructor(options = {}) {
     super({
       ...options,
+      mode: 'external',
+      provider: 'anthropic',
       baseUrl: options.baseUrl || 'https://api.anthropic.com/v1',
-      model: options.model || 'claude-sonnet-4-5', // [VERIFY AGAINST CURRENT PROVIDER TERMS]
+      model: options.model || 'claude-sonnet-4-5', // VERIFY AGAINST CURRENT PROVIDER TERMS
     });
-    this.provider = 'anthropic';
   }
 
   async complete(prompt, config = {}) {
-    this._preFlight();
-    if (!this.hasCredentials) throw new Error('AnthropicAdapter: apiKey [OWNER INPUT REQUIRED]');
+    this._preFlightExternal(config);
+    if (!this.hasCredentials) throw new Error(`AnthropicAdapter: apiKey ${OWNER_INPUT}`);
     const data = await this._sendJson(
       `${this.baseUrl}/messages`,
       { 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
@@ -169,7 +274,7 @@ export class AnthropicAdapter extends AIAdapter {
     );
     const text = data.content && data.content[0] && data.content[0].text ? data.content[0].text : '';
     const usage = this.usageTracker.record(data.usage ? (data.usage.input_tokens + data.usage.output_tokens) : 0);
-    return { text, usage, provider: this.provider, model: data.model || this.model };
+    return { text, usage, provider: this.provider, model: data.model || this.model, mode: this.mode };
   }
 }
 
@@ -177,15 +282,16 @@ export class GeminiAdapter extends AIAdapter {
   constructor(options = {}) {
     super({
       ...options,
+      mode: 'external',
+      provider: 'gemini',
       baseUrl: options.baseUrl || 'https://generativelanguage.googleapis.com/v1beta',
-      model: options.model || 'gemini-2.0-flash', // [VERIFY AGAINST CURRENT PROVIDER TERMS]
+      model: options.model || 'gemini-2.0-flash', // VERIFY AGAINST CURRENT PROVIDER TERMS
     });
-    this.provider = 'gemini';
   }
 
   async complete(prompt, config = {}) {
-    this._preFlight();
-    if (!this.hasCredentials) throw new Error('GeminiAdapter: apiKey [OWNER INPUT REQUIRED]');
+    this._preFlightExternal(config);
+    if (!this.hasCredentials) throw new Error(`GeminiAdapter: apiKey ${OWNER_INPUT}`);
     const model = config.model || this.model;
     const data = await this._sendJson(
       `${this.baseUrl}/models/${model}:generateContent`,
@@ -196,24 +302,28 @@ export class GeminiAdapter extends AIAdapter {
       ? data.candidates[0].content.parts : [];
     const text = parts.map((p) => p.text || '').join('');
     const usage = this.usageTracker.record(data.usageMetadata ? data.usageMetadata.totalTokenCount : 0);
-    return { text, usage, provider: this.provider, model };
+    return { text, usage, provider: this.provider, model, mode: this.mode };
   }
 }
 
-/** Local Ollama — the zero-cost fallback of choice (Zero-Spend Imperative). */
+/**
+ * Local Ollama — zero-cost local daemon (Zero-Spend Imperative).
+ * Localhost traffic only; still usage-tracked and quota-checked.
+ */
 export class OllamaAdapter extends AIAdapter {
   constructor(options = {}) {
     super({
       ...options,
+      mode: 'external',
+      provider: 'ollama',
       baseUrl: options.baseUrl || 'http://localhost:11434',
-      model: options.model || 'llama3.2', // [VERIFY AGAINST CURRENT PROVIDER TERMS]
+      model: options.model || 'llama3.2', // VERIFY AGAINST CURRENT PROVIDER TERMS
     });
-    this.provider = 'ollama';
     this.apiKey = options.apiKey || 'local'; // no cloud key; local daemon only
   }
 
   async complete(prompt, config = {}) {
-    this._preFlight();
+    this._preFlightLocal();
     const data = await this._sendJson(
       `${this.baseUrl}/api/generate`,
       {},
@@ -221,7 +331,7 @@ export class OllamaAdapter extends AIAdapter {
     );
     const text = typeof data.response === 'string' ? data.response : '';
     const usage = this.usageTracker.record(data.eval_count || 0);
-    return { text, usage, provider: this.provider, model: config.model || this.model };
+    return { text, usage, provider: this.provider, model: config.model || this.model, mode: this.mode };
   }
 }
 
@@ -231,6 +341,9 @@ export class OllamaAdapter extends AIAdapter {
 
 export function createAdapter(provider, options = {}) {
   switch (String(provider || '').toLowerCase()) {
+    case 'offline':
+    case 'mock':
+    case '': return new MockAdapter(options);
     case 'openai': return new OpenAIAdapter(options);
     case 'anthropic': return new AnthropicAdapter(options);
     case 'gemini': return new GeminiAdapter(options);

@@ -1,17 +1,36 @@
 /**
  * AgentRegistry.js — BOSS AI Phase 2 · Autonomous Agent Core
- * System registration engine for operational agents (System Architect,
- * Code Builder, Security Auditor, Operations Manager).
+ * System registration + permission gate for operational agents.
  *
- * Stores agent metadata, capabilities, allowed tools list, and context scope.
- * Works standalone (in-memory) or persisted through a StorageAdapter.
- * Every record is multi-tenant tagged (ownerId / tenantId).
+ * Agent definition fields (spec):
+ *   id, name, role, allowedClasses, allowedTools, memoryScope, status
+ *
+ * - Register, list, enable/disable, inspect agent definitions.
+ * - assertCanExecute() PREVENTS unregistered or disabled agents from executing
+ *   any action, and enforces allowedClasses / allowedTools per call.
+ * - Works standalone (in-memory) or persisted through a StorageAdapter.
+ * - Every record is multi-tenant tagged (ownerId / tenantId).
+ *
+ * Security: DOM-free module (zero innerHTML / outerHTML / document.write).
+ * Syntax: ES2017-safe (no ?? / ?. / Object.fromEntries / top-level await).
  */
 
 import { DEFAULT_OWNER_ID, DEFAULT_TENANT_ID } from './StorageAdapter.js';
 
-export const AGENT_ROLES = ['System Architect', 'Code Builder', 'Security Auditor', 'Operations Manager'];
+export const CLASS_VALUES = ['CLASS_A', 'CLASS_B', 'CLASS_C'];
+export const STATUSES = ['enabled', 'disabled'];
+/** Suggested roles (guidance only — any non-empty role string is accepted). */
+export const SUGGESTED_ROLES = ['System Architect', 'Code Builder', 'Security Auditor', 'Operations Manager'];
+
 const ID_RE = /^[a-z0-9][a-z0-9._-]{1,63}$/i;
+const TOOL_RE = /^[a-z0-9][a-z0-9._:-]{0,63}$/i;
+
+function normClass(value) {
+  const up = String(value || '').trim().toUpperCase();
+  if (up.indexOf('CLASS_') === 0) return up;
+  if (up === 'A' || up === 'B' || up === 'C') return 'CLASS_' + up;
+  return '';
+}
 
 export default class AgentRegistry {
   /**
@@ -26,47 +45,56 @@ export default class AgentRegistry {
     this._memory = new Map();
   }
 
-  _strArray(value, label) {
-    if (value === undefined) return [];
-    if (!Array.isArray(value) || value.some((v) => typeof v !== 'string' || !v.trim())) {
-      throw new TypeError(`${label}: must be an array of non-empty strings`);
-    }
-    return value.map((v) => v.trim());
-  }
-
-  _validate(input, { partial = false } = {}) {
+  _validate(input) {
     const errors = [];
     const out = {};
 
-    if (!partial || input.id !== undefined) {
-      if (typeof input.id !== 'string' || !ID_RE.test(input.id)) errors.push('id: 2-64 chars, alphanumeric with . _ -');
-      else out.id = input.id;
+    if (typeof input.id !== 'string' || !ID_RE.test(input.id)) {
+      errors.push('id: 2-64 chars, alphanumeric with . _ -');
+    } else {
+      out.id = input.id;
     }
-    if (!partial || input.name !== undefined) {
-      const name = typeof input.name === 'string' ? input.name.trim() : '';
-      if (!name) errors.push('name: non-empty string required');
-      else out.name = name.slice(0, 120);
-    }
-    if (!partial || input.role !== undefined) {
-      if (!AGENT_ROLES.includes(input.role)) errors.push(`role: must be one of ${AGENT_ROLES.join(' | ')}`);
-      else out.role = input.role;
-    }
-    for (const [field, label] of [['capabilities', 'capabilities'], ['allowedTools', 'allowedTools'], ['contextScope', 'contextScope']]) {
-      if (input[field] !== undefined) {
-        out[field] = field === 'contextScope'
-          ? String(input[field]).trim().slice(0, 120)
-          : this._strArray(input[field], label);
-      } else if (!partial) {
-        out[field] = field === 'contextScope' ? 'workspace' : [];
+
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (!name) errors.push('name: non-empty string required');
+    else out.name = name.slice(0, 120);
+
+    const role = typeof input.role === 'string' ? input.role.trim() : '';
+    if (!role) errors.push('role: non-empty string required');
+    else out.role = role.slice(0, 80);
+
+    // allowedClasses — subset of CLASS_A/CLASS_B/CLASS_C
+    const rawClasses = input.allowedClasses === undefined ? ['CLASS_A'] : input.allowedClasses;
+    if (!Array.isArray(rawClasses) || rawClasses.length === 0) {
+      errors.push('allowedClasses: non-empty array of CLASS_A/CLASS_B/CLASS_C required');
+    } else {
+      const classes = [];
+      for (const value of rawClasses) {
+        const norm = normClass(value);
+        if (!norm || classes.indexOf(norm) >= 0) {
+          errors.push(`allowedClasses: invalid or duplicate entry '${String(value)}'`);
+        } else {
+          classes.push(norm);
+        }
       }
+      out.allowedClasses = classes;
     }
-    if (input.metadata !== undefined) {
-      if (!input.metadata || typeof input.metadata !== 'object' || Array.isArray(input.metadata)) {
-        errors.push('metadata: must be a plain object');
-      } else out.metadata = { ...input.metadata };
-    } else if (!partial) {
-      out.metadata = {};
+
+    // allowedTools — string array (entry '*' = all tools)
+    const rawTools = input.allowedTools === undefined ? [] : input.allowedTools;
+    if (!Array.isArray(rawTools) || rawTools.some((v) => typeof v !== 'string' || (v.trim() !== '*' && !TOOL_RE.test(v.trim())))) {
+      errors.push("allowedTools: array of tool names (or ['*']) required");
+    } else {
+      out.allowedTools = rawTools.map((v) => v.trim());
     }
+
+    const scope = typeof input.memoryScope === 'string' && input.memoryScope.trim()
+      ? input.memoryScope.trim().slice(0, 60) : 'workspace';
+    out.memoryScope = scope;
+
+    const status = input.status === undefined ? 'enabled' : input.status;
+    if (STATUSES.indexOf(status) < 0) errors.push(`status: must be one of ${STATUSES.join(' | ')}`);
+    else out.status = status;
 
     if (errors.length) {
       const err = new Error(`Invalid agent registration: ${errors.join('; ')}`);
@@ -79,8 +107,8 @@ export default class AgentRegistry {
   async _save(record) {
     const stamped = {
       ...record,
-      ownerId: record.ownerId || this.ownerId,
-      tenantId: record.tenantId || this.tenantId,
+      ownerId: this.ownerId,
+      tenantId: this.tenantId,
       updatedAt: new Date().toISOString(),
     };
     if (this.storage) return this.storage.put(this.collection, stamped);
@@ -89,38 +117,92 @@ export default class AgentRegistry {
     return { ...saved };
   }
 
-  /** Register an operational agent. */
-  async registerAgent(input) {
+  /** Register an agent (throws on duplicate id or invalid fields). */
+  async register(input) {
     const data = this._validate(input || {});
-    const existing = await this.getAgent(data.id);
+    const existing = await this.get(data.id);
     if (existing) throw new Error(`Agent already registered: ${data.id}`);
     return this._save({ ...data, registeredAt: new Date().toISOString() });
   }
 
-  async getAgent(id) {
+  async get(id) {
     if (this.storage) return this.storage.get(this.collection, id);
     const found = this._memory.get(id);
     return found ? { ...found } : null;
   }
 
-  async listAgents(filter = {}) {
+  async list(filter = {}) {
     let agents = this.storage
       ? await this.storage.list(this.collection)
       : [...this._memory.values()].map((a) => ({ ...a }));
+    if (filter.status) agents = agents.filter((a) => a.status === filter.status);
     if (filter.role) agents = agents.filter((a) => a.role === filter.role);
-    if (filter.tool) agents = agents.filter((a) => (a.allowedTools || []).includes(filter.tool));
     return agents;
   }
 
-  async updateAgent(id, patch) {
-    const existing = await this.getAgent(id);
-    if (!existing) throw new Error(`Agent not found: ${id}`);
-    const data = this._validate({ ...existing, ...(patch || {}), id });
-    return this._save({ ...existing, ...data });
+  /** Detailed view of one registered agent. */
+  async inspect(id) {
+    const agent = await this.get(id);
+    if (!agent) throw new Error(`Agent not found: ${id}`);
+    return {
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      status: agent.status,
+      allowedClasses: [...(agent.allowedClasses || [])],
+      allowedTools: [...(agent.allowedTools || [])],
+      memoryScope: agent.memoryScope,
+      ownerId: agent.ownerId,
+      tenantId: agent.tenantId,
+      registeredAt: agent.registeredAt,
+      updatedAt: agent.updatedAt,
+    };
   }
 
-  async deregisterAgent(id) {
+  async enable(id) {
+    const agent = await this.get(id);
+    if (!agent) throw new Error(`Agent not found: ${id}`);
+    return this._save({ ...agent, status: 'enabled' });
+  }
+
+  async disable(id) {
+    const agent = await this.get(id);
+    if (!agent) throw new Error(`Agent not found: ${id}`);
+    return this._save({ ...agent, status: 'disabled' });
+  }
+
+  async unregister(id) {
     if (this.storage) return this.storage.delete(this.collection, id);
     return this._memory.delete(id);
+  }
+
+  /**
+   * Non-throwing execution guard.
+   * @returns {{ok: boolean, reason: string}}
+   */
+  async canExecute(agentId, actionClass, toolName) {
+    const agent = await this.get(agentId);
+    if (!agent) return { ok: false, reason: `Agent not registered: ${String(agentId)}` };
+    if (agent.status !== 'enabled') {
+      return { ok: false, reason: `Agent '${agentId}' is ${agent.status} — execution refused` };
+    }
+    const cls = normClass(actionClass);
+    if (cls && (agent.allowedClasses || []).indexOf(cls) < 0) {
+      return { ok: false, reason: `Agent '${agentId}' lacks class permission: ${cls} (allowed: ${(agent.allowedClasses || []).join(', ')})` };
+    }
+    if (toolName && (agent.allowedTools || []).indexOf('*') < 0 && (agent.allowedTools || []).indexOf(toolName) < 0) {
+      return { ok: false, reason: `Agent '${agentId}' lacks tool permission: ${toolName} (allowed: ${(agent.allowedTools || []).join(', ') || 'none'})` };
+    }
+    return { ok: true, reason: `Agent '${agentId}' cleared for ${cls || 'any class'}${toolName ? ' / ' + toolName : ''}` };
+  }
+
+  /**
+   * Throwing execution guard — call BEFORE any tool execution.
+   * @throws {Error} unregistered, disabled, or permission-missing agent
+   */
+  async assertCanExecute(agentId, actionClass, toolName) {
+    const verdict = await this.canExecute(agentId, actionClass, toolName);
+    if (!verdict.ok) throw new Error(verdict.reason);
+    return verdict;
   }
 }

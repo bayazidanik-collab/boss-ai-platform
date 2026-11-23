@@ -1,73 +1,54 @@
 /**
  * ScopedMemory.js — BOSS AI Phase 2 · Autonomous Agent Core
- * Namespace-isolated key-value memory manager.
+ * Agent memory isolated by agentId + ownerId + tenantId.
  *
- * - Agents can only access namespaces explicitly granted to them.
- * - Every record is multi-tenant tagged (ownerId / tenantId).
- * - Values must be JSON-serializable (defense against object injection).
- * - Namespace names and keys are validated strings; no prototype pollution
- *   vectors (Map-based storage, never plain-object property access).
+ * - read / write / clear / listKeys strictly inside the caller's own scope.
+ *   Cross-agent and cross-tenant access is structurally impossible: every key
+ *   is namespaced `tenantId::ownerId::agentId::key` and stamp-checked on read.
+ * - SECRET REFUSAL: keys or values that look like passwords / API keys /
+ *   tokens / credentials are rejected with a clear error. Agent memory must
+ *   NEVER hold secrets.
+ * - Values must be JSON-serializable. Map-based storage (no prototype
+ *   pollution vectors). Optional StorageAdapter persistence.
+ *
+ * Security: DOM-free module (zero innerHTML / outerHTML / document.write).
+ * Syntax: ES2017-safe (no ?? / ?. / Object.fromEntries / top-level await).
  */
 
 import { DEFAULT_OWNER_ID, DEFAULT_TENANT_ID } from './StorageAdapter.js';
 
-const NS_RE = /^[a-z][a-z0-9._-]{0,63}$/i;
+const AGENT_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 const KEY_RE = /^.{1,256}$/;
+const SECRET_KEY_RE = /(api[-_]?key|secret|token|password|passwd|credential|private[-_]?key|auth[-_]?header)/i;
+const SECRET_VALUE_RE = /(sk-[a-z0-9]{16,}|ghp_[a-z0-9]{20,}|gho_[a-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[a-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._-]{20,}|-----BEGIN[A-Z ]*PRIVATE KEY)/;
 
 export default class ScopedMemory {
   /**
-   * @param {{ownerId?: string, tenantId?: string, maxEntriesPerNamespace?: number}} [options]
+   * @param {{storage?: object, ownerId?: string, tenantId?: string,
+   *          maxEntriesPerAgent?: number}} [options]
    */
   constructor(options = {}) {
+    this.storage = options.storage || null;
+    this.collection = 'agent-memory';
     this.ownerId = options.ownerId || DEFAULT_OWNER_ID;
     this.tenantId = options.tenantId || DEFAULT_TENANT_ID;
-    this.maxEntriesPerNamespace = Number.isInteger(options.maxEntriesPerNamespace)
-      ? options.maxEntriesPerNamespace
-      : 1000;
-    this._grants = new Map();   // agentId -> Set(namespace)
-    this._namespaces = new Map(); // namespace -> Map(key -> record)
-    this._log = [];
+    this.maxEntriesPerAgent = Number.isInteger(options.maxEntriesPerAgent)
+      ? options.maxEntriesPerAgent : 1000;
+    this._memory = new Map(); // namespacedKey -> record
+    this._log = []; // append-only access log
   }
 
-  /* ---------------- grants ---------------- */
+  /* ---------------- core API (spec: read / write / clear) ---------------- */
 
-  /** Grant an agent read/write access to one or more namespaces. */
-  grant(agentId, namespaces) {
+  /** Write a value into the agent's own memory scope. */
+  async write(agentId, key, value) {
     this._assertAgent(agentId);
-    const list = Array.isArray(namespaces) ? namespaces : [namespaces];
-    const set = this._grants.get(agentId) || new Set();
-    for (const ns of list) {
-      this._assertNamespace(ns);
-      set.add(ns);
-      if (!this._namespaces.has(ns)) this._namespaces.set(ns, new Map());
-    }
-    this._grants.set(agentId, set);
-    this._pushLog({ event: 'grant', agentId, namespaces: [...set] });
-    return [...set];
-  }
-
-  revoke(agentId, namespace) {
-    this._assertAgent(agentId);
-    this._assertNamespace(namespace);
-    const set = this._grants.get(agentId);
-    if (set) set.delete(namespace);
-    this._pushLog({ event: 'revoke', agentId, namespace });
-    return true;
-  }
-
-  namespacesFor(agentId) {
-    this._assertAgent(agentId);
-    return [...(this._grants.get(agentId) || new Set())];
-  }
-
-  /* ---------------- core operations ---------------- */
-
-  set(agentId, namespace, key, value) {
-    this._authorize(agentId, namespace);
     this._assertKey(key);
-    const bucket = this._namespaces.get(namespace);
-    if (!bucket.has(key) && bucket.size >= this.maxEntriesPerNamespace) {
-      throw new Error(`ScopedMemory: namespace '${namespace}' is full (${this.maxEntriesPerNamespace} entries)`);
+    this._assertNotSecret(key, value);
+    const nsKey = this._nsKey(agentId, key);
+
+    if (!this._memory.has(nsKey) && this._memory.size >= this.maxEntriesPerAgent * 8) {
+      throw new Error(`ScopedMemory: capacity reached (${this.maxEntriesPerAgent} entries/agent)`);
     }
     let serialized;
     try {
@@ -75,80 +56,139 @@ export default class ScopedMemory {
     } catch (_) {
       throw new TypeError('ScopedMemory: value must be JSON-serializable');
     }
+
     const now = new Date().toISOString();
-    const existing = bucket.get(key);
-    bucket.set(key, {
+    const record = {
+      id: nsKey,
+      agentId,
+      key,
       value: serialized,
       ownerId: this.ownerId,
       tenantId: this.tenantId,
-      createdAt: existing ? existing.createdAt : now,
       updatedAt: now,
-      updatedBy: agentId,
-    });
-    this._pushLog({ event: 'set', agentId, namespace, key });
+    };
+    if (this.storage) {
+      const saved = await this.storage.put(this.collection, record);
+      this._log.push({ event: 'write', agentId, key, at: now });
+      return saved.value;
+    }
+    const existing = this._memory.get(nsKey);
+    if (existing) record.createdAt = existing.createdAt;
+    else record.createdAt = now;
+    this._memory.set(nsKey, record);
+    this._log.push({ event: 'write', agentId, key, at: now });
     return serialized;
   }
 
-  get(agentId, namespace, key) {
-    this._authorize(agentId, namespace);
+  /** Read a value from the agent's own memory scope (null when absent). */
+  async read(agentId, key) {
+    this._assertAgent(agentId);
     this._assertKey(key);
-    const record = this._namespaces.get(namespace).get(key);
+    const nsKey = this._nsKey(agentId, key);
+    let record = null;
+    if (this.storage) {
+      record = await this.storage.get(this.collection, nsKey);
+    } else {
+      record = this._memory.get(nsKey) || null;
+    }
     if (!record) return null;
+    // Stamp check — cross-tenant/cross-owner rows are invisible.
     if (record.ownerId !== this.ownerId || record.tenantId !== this.tenantId) return null;
+    if (record.agentId !== agentId) return null;
+    this._log.push({ event: 'read', agentId, key, at: new Date().toISOString() });
     return JSON.parse(JSON.stringify(record.value));
   }
 
-  has(agentId, namespace, key) {
-    this._authorize(agentId, namespace);
-    this._assertKey(key);
-    return this._namespaces.get(namespace).has(key);
-  }
-
-  delete(agentId, namespace, key) {
-    this._authorize(agentId, namespace);
-    this._assertKey(key);
-    const removed = this._namespaces.get(namespace).delete(key);
-    if (removed) this._pushLog({ event: 'delete', agentId, namespace, key });
+  /** Clear ALL memory of one agent (only that agent's keys). */
+  async clear(agentId) {
+    this._assertAgent(agentId);
+    let removed = 0;
+    if (this.storage) {
+      const rows = await this.storage.list(this.collection, (r) => r.agentId === agentId);
+      for (const row of rows) {
+        if (await this.storage.delete(this.collection, row.id)) removed += 1;
+      }
+    } else {
+      const prefix = this._nsPrefix(agentId);
+      for (const key of [...this._memory.keys()]) {
+        if (key.indexOf(prefix) === 0) {
+          this._memory.delete(key);
+          removed += 1;
+        }
+      }
+    }
+    this._log.push({ event: 'clear', agentId, removed, at: new Date().toISOString() });
     return removed;
   }
 
-  listKeys(agentId, namespace) {
-    this._authorize(agentId, namespace);
-    return [...this._namespaces.get(namespace).keys()];
+  /** List keys visible to one agent (its own scope only). */
+  async listKeys(agentId) {
+    this._assertAgent(agentId);
+    const keys = [];
+    if (this.storage) {
+      const rows = await this.storage.list(this.collection, (r) => r.agentId === agentId);
+      for (const row of rows) keys.push(row.key);
+    } else {
+      const prefix = this._nsPrefix(agentId);
+      for (const entry of this._memory.values()) {
+        if (entry.agentId === agentId && entry.ownerId === this.ownerId && entry.tenantId === this.tenantId) {
+          keys.push(entry.key);
+        }
+      }
+      void prefix;
+    }
+    return keys;
   }
 
-  /** Read-only access log (append-only surface). */
+  /**
+   * Bind a handle to ONE agent identity — call sites cannot spoof agentId.
+   * @returns {{read: function, write: function, clear: function, listKeys: function}}
+   */
+  forAgent(agentId) {
+    this._assertAgent(agentId);
+    return {
+      agentId,
+      read: (key) => this.read(agentId, key),
+      write: (key, value) => this.write(agentId, key, value),
+      clear: () => this.clear(agentId),
+      listKeys: () => this.listKeys(agentId),
+    };
+  }
+
+  /** Append-only access log (read-only surface). */
   getLog() {
     return this._log.map((e) => ({ ...e }));
   }
 
   /* ---------------- guards ---------------- */
 
-  _authorize(agentId, namespace) {
-    this._assertAgent(agentId);
-    this._assertNamespace(namespace);
-    const set = this._grants.get(agentId);
-    if (!set || !set.has(namespace)) {
-      throw new Error(`ScopedMemory: agent '${agentId}' is not authorized for namespace '${namespace}'`);
-    }
-    if (!this._namespaces.has(namespace)) this._namespaces.set(namespace, new Map());
+  _nsPrefix(agentId) {
+    return `${this.tenantId}::${this.ownerId}::${agentId}::`;
+  }
+
+  _nsKey(agentId, key) {
+    return this._nsPrefix(agentId) + key;
   }
 
   _assertAgent(agentId) {
-    if (typeof agentId !== 'string' || !agentId.trim()) throw new TypeError('agentId: non-empty string required');
-  }
-
-  _assertNamespace(namespace) {
-    if (typeof namespace !== 'string' || !NS_RE.test(namespace)) {
-      throw new TypeError(`namespace: invalid name '${String(namespace)}'`);
+    if (typeof agentId !== 'string' || !AGENT_RE.test(agentId)) {
+      throw new TypeError(`agentId: invalid '${String(agentId)}'`);
     }
   }
 
   _assertKey(key) {
-    if (typeof key !== 'string' || !KEY_RE.test(key)) throw new TypeError('key: must be a string of 1-256 chars');
+    if (typeof key !== 'string' || !KEY_RE.test(key)) {
+      throw new TypeError('key: must be a string of 1-256 chars');
+    }
   }
 
-  _pushLog(entry) {
-    this._log.push({ ...entry, at: new Date().toISOString() });
+  /** Secret material must NEVER be stored in agent memory. */
+  _assertNotSecret(key, value) {
+    if (SECRET_KEY_RE.test(String(key))) {
+      throw new Error(`ScopedMemory refused: key '${String(key)}' looks like a secret/credential — agent memory must never store secrets`);
+    }
+    if (typeof value === 'string' && SECRET_VALUE_RE.test(value)) {
+      throw new Error('ScopedMemory refused: value looks like a secret/credential (API key/token) — agent memory must never store secrets');
+    }
   }
 }

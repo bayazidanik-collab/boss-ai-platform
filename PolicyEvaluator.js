@@ -2,42 +2,60 @@
  * PolicyEvaluator.js — BOSS AI Phase 2 · Autonomous Agent Core
  * Default-Deny governance evaluator for the Class A/B/C Autonomy Matrix.
  *
- *   Class A — Autonomous Execution (no approval)
- *   Class B — Explicit Owner Approval required (single-use sign-off)
- *   Class C — Strictly Prohibited (never allowed)
+ *   CLASS_A — Automatic / safe local execution (no approval needed).
+ *   CLASS_B — Explicit Owner Approval required (ownerApproved: true).
+ *   CLASS_C — Prohibited by default: paid/cost operations, secrets/credentials
+ *             access, background auto-publish, UNAPPROVED external network calls.
+ *             Always blocked — never ask the Owner to paste secrets/keys.
  *
- * evaluate(request) -> { allowed, requiresOwnerApproval, actionClass, reason }
+ * evaluate(request) -> { allowed, actionClass, reason, requiresApproval, scope }
  *
- * `allowed` semantics: TRUE only when the agent may proceed WITHOUT further
- * human action. Class B returns allowed=false + requiresOwnerApproval=true —
- * execution becomes permissible only after the owner signs off (the approval
- * token is checked by ToolBroker, not here).
+ * Zero-Spend Imperative (hard rule): costEstimate > 0 or requiresPaidSpend === true
+ * is ALWAYS CLASS_C — blocked unconditionally, even with owner approval.
  *
- * Unmatched actions fall to default-deny and escalate to Class B.
+ * Security: DOM-free module (zero innerHTML / outerHTML / document.write).
+ * Syntax: ES2017-safe (no ?? / ?. / Object.fromEntries / top-level await).
  */
 
-export const ACTION_CLASSES = { A: 'A', B: 'B', C: 'C' };
+import { DEFAULT_OWNER_ID, DEFAULT_TENANT_ID } from './StorageAdapter.js';
 
-/** Class A — planning, documentation, client-side code, local QA, static analysis. */
-export const CLASS_A_ACTIONS = new Set([
-  'task_planning', 'system_decomposition', 'documentation_generation', 'documentation',
-  'code_generation', 'client_code_generation', 'local_qa_script', 'local_qa',
-  'static_security_analysis', 'static_analysis', 'task_decomposition', 'report_generation',
-]);
+export const CLASS_A = 'CLASS_A';
+export const CLASS_B = 'CLASS_B';
+export const CLASS_C = 'CLASS_C';
 
-/** Class B — external effects, credentials, deployments, anything that can cost money. */
-export const CLASS_B_ACTIONS = new Set([
-  'send_email', 'send_webhook', 'external_message', 'create_account', 'third_party_signup',
-  'modify_api_key', 'change_secrets', 'key_change', 'production_deploy', 'deploy_production',
-  'incur_cost', 'paid_api_call', 'financial_operation', 'external_api_call',
-]);
+export const ACTION_CLASSES = [CLASS_A, CLASS_B, CLASS_C];
 
-/** Class C — strictly prohibited under any circumstance. */
-export const CLASS_C_ACTIONS = new Set([
+/** Action names that are always CLASS_C (never allowed under any approval). */
+export const PROHIBITED_ACTIONS = new Set([
   'privilege_escalation', 'self_elevation', 'policy_override', 'override_policy',
   'skip_approval_gate', 'bypass_checks', 'audit_log_tamper', 'modify_audit_log',
-  'delete_audit_log', 'secret_exfiltration', 'exfiltrate_secrets', 'autonomous_financial_transaction',
-  'steal_credentials',
+  'delete_audit_log', 'secret_exfiltration', 'exfiltrate_secrets', 'steal_credentials',
+  'access_secrets', 'autonomous_financial_transaction', 'background_auto_publish',
+]);
+
+/** Action names that touch passwords / API keys / secrets / credentials (CLASS_C). */
+export const SECRET_ACTIONS = new Set([
+  'modify_api_key', 'change_secrets', 'key_change', 'access_passwords', 'access_api_keys',
+  'store_secret', 'read_secret', 'secret_access', 'credential_access', 'handle_credentials',
+]);
+
+/** Action names requiring Owner Approval (CLASS_B). */
+export const APPROVAL_ACTIONS = new Set([
+  'delete_data', 'delete', 'reset', 'reset_all_data', 'overwrite',
+  'backup_restore', 'import_backup', 'external_storage_write',
+  'repo_visibility_change', 'repo_config_change',
+  'send_email', 'send_webhook', 'external_message', 'create_account', 'third_party_signup',
+  'production_deploy', 'deploy_production', 'external_api_call',
+]);
+
+/** Known-safe local action names (CLASS_A). */
+export const LOCAL_ACTIONS = new Set([
+  'task_planning', 'system_decomposition', 'task_decomposition',
+  'documentation', 'documentation_generation', 'report_generation',
+  'code_generation', 'client_code_generation',
+  'local_qa', 'local_qa_script', 'static_analysis', 'static_security_analysis',
+  'local_read', 'local_search', 'local_query', 'local_write', 'memory_read', 'memory_write',
+  'task_transition', 'echo', 'status_check', 'health_check',
 ]);
 
 function normalize(action) {
@@ -46,87 +64,133 @@ function normalize(action) {
 
 export default class PolicyEvaluator {
   /**
-   * @param {{extraRules?: Object<string, 'A'|'B'|'C'>}} [options]
-   *   extraRules maps additional normalized action names to a class.
+   * @param {{ownerId?: string, tenantId?: string,
+   *          extraRules?: Object<string, 'CLASS_A'|'CLASS_B'|'CLASS_C'|'A'|'B'|'C'>}} [options]
    */
   constructor(options = {}) {
+    this.ownerId = options.ownerId || DEFAULT_OWNER_ID;
+    this.tenantId = options.tenantId || DEFAULT_TENANT_ID;
     this.extraRules = {};
     if (options.extraRules && typeof options.extraRules === 'object') {
       for (const [action, cls] of Object.entries(options.extraRules)) {
-        if (!ACTION_CLASSES[cls]) throw new TypeError(`extraRules: invalid class '${cls}' for action '${action}'`);
-        this.extraRules[normalize(action)] = cls;
+        const norm = String(cls).toUpperCase().replace('CLASS_', '');
+        if (ACTION_CLASSES.indexOf('CLASS_' + norm) < 0) {
+          throw new TypeError(`extraRules: invalid class '${cls}' for action '${action}'`);
+        }
+        this.extraRules[normalize(action)] = 'CLASS_' + norm;
       }
     }
   }
 
   /**
-   * Evaluate an action request under default-deny rules.
-   * @param {{action: string, payload?: object, context?: object}} request
-   * @returns {{allowed: boolean, requiresOwnerApproval: boolean, actionClass: 'A'|'B'|'C', reason: string}}
+   * Pure classification (no approval logic).
+   * @param {object} request
+   * @returns {{actionClass: string, reason: string}}
+   */
+  classify(request) {
+    const req = request || {};
+    const action = normalize(req.action);
+
+    if (!action) {
+      return { actionClass: CLASS_B, reason: 'Default-deny: empty action name escalated to owner' };
+    }
+
+    // 1) Secrets / credentials — prohibited outright (never ask the Owner for secrets).
+    if (PROHIBITED_ACTIONS.has(action) || SECRET_ACTIONS.has(action) || req.involvesSecrets === true) {
+      return {
+        actionClass: CLASS_C,
+        reason: `Prohibited (Class C): secrets/credentials or hard-banned action '${action}'`,
+      };
+    }
+
+    // 2) Zero-Spend Imperative — any cost is blocked unconditionally.
+    const cost = typeof req.costEstimate === 'number' ? req.costEstimate : 0;
+    if (req.requiresPaidSpend === true || cost > 0) {
+      return {
+        actionClass: CLASS_C,
+        reason: `Prohibited (Class C): zero-spend policy — costEstimate ${cost} / requiresPaidSpend ${String(req.requiresPaidSpend)}`,
+      };
+    }
+
+    // 3) Background auto-publish — prohibited.
+    if (req.backgroundPublish === true) {
+      return { actionClass: CLASS_C, reason: 'Prohibited (Class C): background auto-publish is never allowed' };
+    }
+
+    // 4) External network / webhooks — Class C when unapproved, Class B when approved.
+    if (req.externalNetwork === true) {
+      if (req.ownerApproved === true || (req.ownerApproval && req.ownerApproval.approved === true)) {
+        return { actionClass: CLASS_B, reason: `Owner-approved external network action '${action}' (Class B)` };
+      }
+      return {
+        actionClass: CLASS_C,
+        reason: `Prohibited (Class C): unapproved external network/webhook call '${action}'`,
+      };
+    }
+
+    // 5) Registered extra rules (explicit local overrides).
+    const extra = this.extraRules[action];
+    if (extra) return { actionClass: extra, reason: `Classified by configured rule: '${action}' -> ${extra}` };
+
+    // 6) Destructive / backup / external-storage / repo-config effects (Class B).
+    if (
+      req.destructive === true || req.backupRestore === true ||
+      req.externalStorageWrite === true || req.repoConfigChange === true ||
+      APPROVAL_ACTIONS.has(action)
+    ) {
+      return { actionClass: CLASS_B, reason: `Owner approval required (Class B): '${action}'` };
+    }
+
+    // 7) Known-safe local actions (Class A).
+    if (LOCAL_ACTIONS.has(action)) {
+      return { actionClass: CLASS_A, reason: `Permitted (Class A): local action '${action}'` };
+    }
+
+    // 8) Default-deny: unmatched actions escalate to the owner.
+    return { actionClass: CLASS_B, reason: `Default-deny: unmatched action '${action}' escalated to owner` };
+  }
+
+  /**
+   * Full evaluation with approval + scope.
+   * @param {object} request { action, costEstimate?, requiresPaidSpend?, externalNetwork?,
+   *                           backgroundPublish?, involvesSecrets?, destructive?, backupRestore?,
+   *                           externalStorageWrite?, repoConfigChange?, ownerApproved? }
+   * @returns {{allowed: boolean, actionClass: string, reason: string,
+   *            requiresApproval: boolean, scope: {ownerId: string, tenantId: string}}}
    */
   evaluate(request) {
-    const action = normalize(request && request.action);
-    if (!action) {
-      return {
-        allowed: false,
-        requiresOwnerApproval: true,
-        actionClass: ACTION_CLASSES.B,
-        reason: 'Default-deny: empty action name escalated to owner',
-      };
-    }
+    const verdict = this.classify(request || {});
+    const req = request || {};
+    const ownerApproved = req.ownerApproved === true || (req.ownerApproval && req.ownerApproval.approved === true);
 
-    // 1) Class C — hard prohibition wins over everything (including extra rules).
-    if (CLASS_C_ACTIONS.has(action)) {
-      return {
-        allowed: false,
-        requiresOwnerApproval: false,
-        actionClass: ACTION_CLASSES.C,
-        reason: `Prohibited action (Class C): ${action}`,
-      };
-    }
+    let allowed = false;
+    let requiresApproval = false;
+    let reason = verdict.reason;
 
-    // 2) Registered extra rules (explicit permit/deny additions).
-    const extra = this.extraRules[action];
-    if (extra === 'C') {
-      return { allowed: false, requiresOwnerApproval: false, actionClass: ACTION_CLASSES.C, reason: `Prohibited by configured rule: ${action}` };
+    if (verdict.actionClass === CLASS_A) {
+      allowed = true;
+    } else if (verdict.actionClass === CLASS_B) {
+      requiresApproval = true;
+      if (ownerApproved) {
+        allowed = true;
+        reason = verdict.reason + ' — owner approval recorded';
+      } else {
+        reason = verdict.reason + ' — blocked until ownerApproved: true';
+      }
     }
-    if (extra === 'A') {
-      return { allowed: true, requiresOwnerApproval: false, actionClass: ACTION_CLASSES.A, reason: `Permitted (Class A by configured rule): ${action}` };
-    }
-    if (extra === 'B') {
-      return { allowed: false, requiresOwnerApproval: true, actionClass: ACTION_CLASSES.B, reason: `Owner approval required (configured rule): ${action}` };
-    }
+    // CLASS_C stays blocked unconditionally.
 
-    // 3) Built-in Class B.
-    if (CLASS_B_ACTIONS.has(action)) {
-      return {
-        allowed: false,
-        requiresOwnerApproval: true,
-        actionClass: ACTION_CLASSES.B,
-        reason: `Owner approval required (Class B): ${action}`,
-      };
-    }
-
-    // 4) Built-in Class A.
-    if (CLASS_A_ACTIONS.has(action)) {
-      return {
-        allowed: true,
-        requiresOwnerApproval: false,
-        actionClass: ACTION_CLASSES.A,
-        reason: `Permitted (Class A): ${action}`,
-      };
-    }
-
-    // 5) Default-deny: unknown actions escalate to the owner.
     return {
-      allowed: false,
-      requiresOwnerApproval: true,
-      actionClass: ACTION_CLASSES.B,
-      reason: `Default-deny: unmatched action '${action}' escalated to owner`,
+      allowed,
+      actionClass: verdict.actionClass,
+      reason,
+      requiresApproval,
+      scope: { ownerId: this.ownerId, tenantId: this.tenantId },
     };
   }
 
+  /** True when the action can NEVER run (Class C). */
   isProhibited(action) {
-    return this.evaluate({ action }).actionClass === ACTION_CLASSES.C;
+    return this.classify({ action }).actionClass === CLASS_C;
   }
 }
