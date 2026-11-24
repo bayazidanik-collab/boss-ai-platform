@@ -15,6 +15,8 @@
 
 export const DEFAULT_OWNER_ID = 'local-owner';
 export const DEFAULT_TENANT_ID = 'default-tenant';
+import IdentityContext from './IdentityContext.js';
+
 export const SCHEMA_VERSION = 1;
 
 const DB_NAME = 'boss-ai-hub';
@@ -55,15 +57,28 @@ export default class StorageAdapter {
    * @param {function(Error):void} [options.onQuotaExceeded] user alert callback
    */
   constructor(options = {}) {
+    this.identity = IdentityContext.from(options.identity);
     this.dbName = options.dbName || DB_NAME;
-    this.ownerId = options.ownerId || DEFAULT_OWNER_ID;
-    this.tenantId = options.tenantId || DEFAULT_TENANT_ID;
+    this.ownerId = options.ownerId || this.identity.ownerId;
+    this.tenantId = options.tenantId || this.identity.tenantId;
     this.onQuotaExceeded = typeof options.onQuotaExceeded === 'function' ? options.onQuotaExceeded : null;
     this.schemaVersion = SCHEMA_VERSION;
     this.backend = null; // 'idb' | 'local' | 'memory'
     this._db = null;
     this._localMap = new Map();
     this._memoryStore = new Map();
+    this._mutationObserver = null; // SyncEngine hooks here (Phase 5b)
+  }
+
+  /* Mutation observer — additive; observers must never break writes. */
+  setMutationObserver(fn) {
+    this._mutationObserver = typeof fn === 'function' ? fn : null;
+  }
+
+  _notifyMutation(op) {
+    try {
+      if (this._mutationObserver) this._mutationObserver(op);
+    } catch (_) { /* never let an observer break CRUD */ }
   }
 
   /** True only when a real, writable localStorage is available. */
@@ -245,20 +260,27 @@ export default class StorageAdapter {
   /* Record stamping                                                     */
   /* ------------------------------------------------------------------ */
 
-  _stampNew(record) {
+  _stampNew(record, options = {}) {
     const now = new Date().toISOString();
+    const preserve = !!options.preserveStamps;
     return {
       ...record,
       id: record.id || uuid(),
       ownerId: record.ownerId || this.ownerId,
       tenantId: record.tenantId || this.tenantId,
       createdAt: record.createdAt || now,
-      updatedAt: now,
+      updatedAt: preserve && record.updatedAt ? record.updatedAt : now,
+      // Phase 5a sync metadata (additive — old readers ignore these)
+      rev: preserve && Number.isInteger(record.rev) && record.rev > 0 ? record.rev : 1,
+      deletedAt: record.deletedAt || null,
+      originDeviceId: record.originDeviceId || this.identity.deviceId,
       schemaVersion: SCHEMA_VERSION,
     };
   }
 
-  _stampUpdate(existing, patch) {
+  _stampUpdate(existing, patch, options = {}) {
+    const now = new Date().toISOString();
+    const preserve = !!options.preserveStamps;
     return {
       ...existing,
       ...patch,
@@ -266,7 +288,10 @@ export default class StorageAdapter {
       ownerId: existing.ownerId,
       tenantId: existing.tenantId,
       createdAt: existing.createdAt,
-      updatedAt: new Date().toISOString(),
+      updatedAt: preserve && patch.updatedAt ? patch.updatedAt : now,
+      rev: preserve && Number.isInteger(patch.rev) && patch.rev > 0 ? patch.rev : (existing.rev || 0) + 1,
+      deletedAt: patch.deletedAt !== undefined ? patch.deletedAt : (existing.deletedAt || null),
+      originDeviceId: preserve && patch.originDeviceId ? patch.originDeviceId : this.identity.deviceId,
       schemaVersion: SCHEMA_VERSION,
     };
   }
@@ -276,29 +301,32 @@ export default class StorageAdapter {
   /* ------------------------------------------------------------------ */
 
   /** Upsert a record. New records receive id/createdAt/updatedAt/ownerId/tenantId. */
-  async put(collection, record) {
+  async put(collection, record, options = {}) {
     this._assertCollection(collection);
     if (!record || typeof record !== 'object' || Array.isArray(record)) {
       throw new TypeError('put() requires a plain object record');
     }
     const rows = await this._readRows(collection);
     const idx = record.id ? rows.findIndex((r) => r && r.id === record.id) : -1;
+    const prev = idx >= 0 ? rows[idx] : null;
     let saved;
     if (idx >= 0) {
-      saved = this._stampUpdate(rows[idx], record);
+      saved = this._stampUpdate(rows[idx], record, options);
       rows[idx] = saved;
     } else {
-      saved = this._stampNew(record);
+      saved = this._stampNew(record, options);
       rows.push(saved);
     }
     await this._writeRows(collection, rows);
+    this._notifyMutation({ type: 'put', collection, id: saved.id, record: saved, prev });
     return { ...saved };
   }
 
-  async get(collection, id) {
+  async get(collection, id, options = {}) {
     this._assertCollection(collection);
     const rows = await this._readRows(collection);
     const found = rows.find((r) => r && r.id === id && r.ownerId === this.ownerId && r.tenantId === this.tenantId);
+    if (found && found.deletedAt && !options.includeDeleted) return null;
     return found ? { ...found } : null;
   }
 
@@ -307,8 +335,34 @@ export default class StorageAdapter {
     const rows = await this._readRows(collection);
     const idx = rows.findIndex((r) => r && r.id === id && r.ownerId === this.ownerId && r.tenantId === this.tenantId);
     if (idx < 0) return false;
+    const prev = rows[idx];
     rows.splice(idx, 1);
     await this._writeRows(collection, rows);
+    this._notifyMutation({ type: 'delete', collection, id, record: null, prev });
+    return true;
+  }
+
+  /**
+   * Soft delete (Phase 5a sync): marks deletedAt and hides the row from
+   * get()/list() unless { includeDeleted: true }. Keeps the row so deletions
+   * can propagate through SyncEngine. Pass stamps to preserve sync metadata.
+   */
+  async tombstone(collection, id, stamps = {}) {
+    this._assertCollection(collection);
+    const rows = await this._readRows(collection);
+    const idx = rows.findIndex((r) => r && r.id === id && r.ownerId === this.ownerId && r.tenantId === this.tenantId);
+    if (idx < 0) return false;
+    const existing = rows[idx];
+    const now = new Date().toISOString();
+    const patch = {
+      ...existing,
+      deletedAt: stamps.deletedAt || now,
+      updatedAt: stamps.updatedAt || now,
+    };
+    const saved = this._stampUpdate(existing, patch, { preserveStamps: !!(stamps.updatedAt || stamps.rev) });
+    rows[idx] = saved;
+    await this._writeRows(collection, rows);
+    this._notifyMutation({ type: 'tombstone', collection, id, record: saved, prev: existing });
     return true;
   }
 
@@ -317,10 +371,11 @@ export default class StorageAdapter {
    * @param {string} collection
    * @param {object|function|null} [filter] equality map or predicate
    */
-  async list(collection, filter = null) {
+  async list(collection, filter = null, options = {}) {
     this._assertCollection(collection);
     const rows = await this._readRows(collection);
     let scoped = rows.filter((r) => r && r.ownerId === this.ownerId && r.tenantId === this.tenantId);
+    if (!options.includeDeleted) scoped = scoped.filter((r) => !r.deletedAt);
     if (typeof filter === 'function') {
       scoped = scoped.filter(filter);
     } else if (filter && typeof filter === 'object') {
