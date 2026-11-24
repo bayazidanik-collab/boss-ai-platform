@@ -18,6 +18,8 @@ import AgentRegistry from './AgentRegistry.js';
 import AIAdapter from './AIAdapter.js';
 import WorkspaceEngine from './WorkspaceEngine.js';
 import PromptPack from './PromptPack.js';
+import IdentityContext from './IdentityContext.js';
+import SyncEngine from './SyncEngine.js';
 
 /* ================================================================== */
 /* Safe DOM helpers                                                    */
@@ -177,7 +179,11 @@ function confirmModal({ title, message, confirmLabel = 'Confirm', danger = false
 /* Engine boot (top-level await)                                       */
 /* ================================================================== */
 
+/* Single identity source for tenancy + sync metadata (Phase 5a). */
+const identity = new IdentityContext();
+
 const storage = new StorageAdapter({
+  identity,
   onQuotaExceeded: () => {
     toast('Storage quota exceeded — export a backup and free space.', 'error');
     showBanner('Client storage is full. Export a JSON backup from More → Data & Backup, then free space.', 'Export now', () => setView('more'));
@@ -185,6 +191,7 @@ const storage = new StorageAdapter({
 });
 
 const backupEngine = new BackupEngine(storage);
+const syncEngine = new SyncEngine(storage, { identity, maxOps: 500 });
 const workspaceEngine = new WorkspaceEngine(storage);
 const promptPack = new PromptPack({ workspaceEngine });
 
@@ -196,7 +203,7 @@ let noteEngine = null;
 let searchEngine = null;
 
 function bindWorkspace(workspaceId) {
-    const bundle = workspaceEngine.scopedEngines(workspaceId);
+  const bundle = workspaceEngine.scopedEngines(workspaceId);
   taskEngine = bundle.taskEngine;
   projectEngine = bundle.projectEngine;
   noteEngine = bundle.noteEngine;
@@ -561,6 +568,7 @@ async function deleteNoteFlow(note) {
 /* ================================================================== */
 /* Render: More (storage meter)                                        */
 /* ================================================================== */
+
 async function refreshStorageMeter() {
   const usage = await backupEngine.calculateStorageUsage();
   const fill = document.getElementById('storage-fill');
@@ -601,7 +609,6 @@ async function renderAgentPolicyStatus() {
     ]));
   }
 }
-
 /* ================================================================== */
 /* ================================================================== */
 /* Track B: Workspace switcher + Products (Prompt Packs)               */
@@ -737,7 +744,7 @@ function openImportPackModal() {
         title: 'Import pack?',
         message: 'CLASS B action. Register this external prompt pack after strict validation?',
         confirmLabel: 'Import pack',
-                danger: true,
+        danger: true,
       });
       if (!ok) return;
       try {
@@ -927,7 +934,6 @@ async function openNoteForm(note) {
     ],
   });
 }
-
 /* ================================================================== */
 /* Global search                                                       */
 /* ================================================================== */
@@ -1070,6 +1076,59 @@ async function resetFlow() {
 /* Wire static events + boot                                           */
 /* ================================================================== */
 
+/* ===================== Sync (Phase 5b — file exchange, zero network) ===================== */
+
+async function syncExportFlow() {
+  try {
+    const text = await syncEngine.exportOutbox();
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = `boss-ai-sync-${stamp}.json`;
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = el('a', { href: url, download: fileName });
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast(`Sync file exported as ${fileName}`);
+  } catch (err) {
+    toast(err.message || 'Sync export failed.', 'error');
+  }
+}
+
+function syncImportFlow(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onerror = () => toast('Could not read the selected file.', 'error');
+  reader.onload = async () => {
+    const yes = await confirmModal({
+      title: 'Import sync file? (Class B)',
+      message: 'Merges changes from the file into this device using last-write-wins. Nothing is erased; conflicting edits are kept in the local sync history for audit.',
+      confirmLabel: 'Import & merge',
+    });
+    if (!yes) return;
+    const report = await syncEngine.importPayload(String(reader.result));
+    if (report.ok) {
+      toast(`Sync merged — ${report.merged} applied, ${report.kept} kept.`);
+      renderAll();
+    } else {
+      toast('Sync import rejected: ' + (report.errors || []).slice(0, 2).join('; '), 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function renderSyncStatus() {
+  const node = document.getElementById('sync-text');
+  if (!node) return;
+  try {
+    const hist = await syncEngine.auditHistory();
+    node.textContent = `Sync: ${hist.length} recorded change(s) on ${identity.deviceId} · file exchange only — zero network calls.`;
+  } catch (_) {
+    node.textContent = 'Sync: offline file exchange — zero network calls.';
+  }
+}
+
 function renderAll() {
   renderDashboard();
   renderTasks();
@@ -1079,6 +1138,7 @@ function renderAll() {
   renderAgentPolicyStatus();
   renderWorkspaceUI();
   renderPackList();
+  renderSyncStatus();
 }
 
 function wireEvents() {
@@ -1138,6 +1198,15 @@ function wireEvents() {
   });
   document.getElementById('btn-refresh-storage').addEventListener('click', refreshStorageMeter);
   document.getElementById('btn-reset').addEventListener('click', resetFlow);
+  document.getElementById('btn-sync-export').addEventListener('click', syncExportFlow);
+  document.getElementById('btn-sync-import').addEventListener('click', () => {
+    document.getElementById('file-sync-import').click();
+  });
+  document.getElementById('file-sync-import').addEventListener('change', (event) => {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    syncImportFlow(file);
+  });
 }
 
 function registerServiceWorker() {
