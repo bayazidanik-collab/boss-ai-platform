@@ -60,8 +60,9 @@
 
   <!-- ============ Banner slot (quota warnings) ============ -->
   <div id="banner-slot" class="banner-slot" role="alert" aria-live="assertive"></div>
-    <!-- ============ Main views ============ -->
-  <main id="app-main" class="app-main">
+
+  <!-- ============ Main views ============ -->
+    <main id="app-main" class="app-main">
 
     <!-- Dashboard -->
     <section id="view-dashboard" class="view" aria-label="Dashboard">
@@ -149,6 +150,12 @@
           <button id="btn-import" class="btn btn-secondary" type="button">Import JSON</button>
         </div>
         <input id="file-import" type="file" accept="application/json,.json" hidden aria-label="Choose backup file to import">
+        <div class="btn-row">
+          <button id="btn-sync-export" class="btn btn-secondary" type="button">Export sync file</button>
+          <button id="btn-sync-import" class="btn btn-secondary" type="button">Import sync file</button>
+        </div>
+        <input id="file-sync-import" type="file" accept="application/json,.json" hidden aria-label="Choose sync file to import">
+        <p id="sync-text" class="hint">Sync: offline file exchange — zero network calls.</p>
       </div>
 
       <div class="panel">
