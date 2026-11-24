@@ -16,6 +16,7 @@ import { PROJECT_STATUSES } from './ProjectEngine.js';
 
 export const BACKUP_APP_ID = 'boss-ai-hub';
 export const BACKUP_VERSION = '1.0';
+export const BACKUP_SCHEMA_VERSION = 2; // v2: rev/deletedAt/originDeviceId sync metadata
 export const BACKUP_COLLECTIONS = ['tasks', 'projects', 'notes', 'settings', 'workspaces'];
 const WARNING_THRESHOLD = 0.8;
 const LOCAL_QUOTA_ESTIMATE = 5 * 1024 * 1024; // LocalStorage heuristic (chars ≈ UTF-16 units)
@@ -39,13 +40,15 @@ export default class BackupEngine {
   async exportData() {
     const data = {};
     for (const collection of BACKUP_COLLECTIONS) {
-      data[collection] = await this.storage.list(collection);
+      // includeDeleted: tombstones must travel so deletions survive restore/sync.
+      data[collection] = await this.storage.list(collection, null, { includeDeleted: true });
     }
     const payload = {
       meta: {
         app: BACKUP_APP_ID,
         version: BACKUP_VERSION,
-        schemaVersion: SCHEMA_VERSION,
+        schemaVersion: BACKUP_SCHEMA_VERSION,
+        deviceId: (this.storage.identity && this.storage.identity.deviceId) || 'local-device',
         exportedAt: new Date().toISOString(),
       },
       data,
@@ -89,10 +92,16 @@ export default class BackupEngine {
 
     const imported = {};
     for (const collection of BACKUP_COLLECTIONS) {
-      const records = Array.isArray(parsed.data[collection]) ? parsed.data[collection] : [];
+      // Backfill Phase 5a sync metadata so v1 archives restore cleanly.
+      const records = (Array.isArray(parsed.data[collection]) ? parsed.data[collection] : []).map((row) => ({
+        ...row,
+        rev: Number.isInteger(row.rev) && row.rev > 0 ? row.rev : 1,
+        deletedAt: row.deletedAt || null,
+        originDeviceId: row.originDeviceId || 'imported',
+      }));
       if (mode === 'merge') {
         for (const record of records) {
-          await this.storage.put(collection, record);
+          await this.storage.put(collection, record, { preserveStamps: true });
         }
         imported[collection] = records.length;
       } else {
@@ -116,8 +125,8 @@ export default class BackupEngine {
       if (typeof meta.version !== 'string' || !meta.version.trim()) errors.push('meta.version: non-empty string required');
       if (!Number.isInteger(meta.schemaVersion) || meta.schemaVersion < 1) {
         errors.push('meta.schemaVersion: positive integer required');
-      } else if (meta.schemaVersion > SCHEMA_VERSION) {
-        errors.push(`meta.schemaVersion: backup ${meta.schemaVersion} is newer than runtime ${SCHEMA_VERSION} — refusing to import`);
+      } else if (meta.schemaVersion > BACKUP_SCHEMA_VERSION) {
+        errors.push(`meta.schemaVersion: backup ${meta.schemaVersion} is newer than runtime ${BACKUP_SCHEMA_VERSION} — refusing to import`);
       }
       if (!isIsoDate(meta.exportedAt)) errors.push('meta.exportedAt: ISO 8601 date string required');
     }
@@ -142,6 +151,8 @@ export default class BackupEngine {
           return;
         }
         if (typeof row.id !== 'string' || !row.id.trim()) errors.push(`${at}.id: non-empty string required`);
+        if (row.rev !== undefined && (!Number.isInteger(row.rev) || row.rev < 1)) errors.push(`${at}.rev: positive integer required`);
+        if (row.deletedAt !== undefined && row.deletedAt !== null && !isIsoDate(row.deletedAt)) errors.push(`${at}.deletedAt: ISO 8601 string or null required`);
         for (const field of fields.strings) {
           if (row[field] !== undefined && row[field] !== null && typeof row[field] !== 'string') errors.push(`${at}.${field}: must be a string`);
         }
